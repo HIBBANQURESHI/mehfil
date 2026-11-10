@@ -426,3 +426,26 @@ FodyWeavers.xsd
 
 # Official VS Code C# Dev Kit Extension exclusion
 #*.lscache
+
+# Mehfil
+.expo/
+.next/
+dist/
+.env.local
+.env.production
+uploads/
+.pg-data/
+.pg.log
+.api.log
+.test.log
+.build.log
+.start.log
+next-env.d.ts
+*.tsbuildinfo
+
+# Keep the shared workspace package (the template above ignores any folder named packages)
+!packages/
+!packages/shared/
+!packages/shared/**
+packages/shared/dist/
+packages/shared/node_modules/

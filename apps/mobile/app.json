@@ -1,0 +1,54 @@
+{
+  "expo": {
+    "name": "Mehfil",
+    "slug": "mehfil",
+    "scheme": "mehfil",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#FFFDF9",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.mehfil.app"
+    },
+    "android": {
+      "package": "com.mehfil.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#8F3048"
+      }
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single",
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-font",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash.png",
+          "imageWidth": 200,
+          "backgroundColor": "#FFFDF9"
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#8F3048"
+        }
+      ],
+      "expo-status-bar",
+      "expo-web-browser",
+      "expo-image",
+      "@react-native-community/datetimepicker"
+    ],
+    "experiments": {
+      "typedRoutes": false
+    }
+  }
+}

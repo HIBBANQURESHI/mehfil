@@ -1,0 +1,1174 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  BLOCKED
+  DELETED
+}
+
+enum VendorStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  CHANGES_REQUIRED
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
+enum ListingStatus {
+  DRAFT
+  PENDING_REVIEW
+  PUBLISHED
+  REJECTED
+  PAUSED
+  ARCHIVED
+}
+
+enum EnquiryStatus {
+  NEW
+  VIEWED
+  RESPONDED
+  QUOTATION_SENT
+  CLOSED
+  DECLINED
+  EXPIRED
+}
+
+enum QuotationStatus {
+  DRAFT
+  SENT
+  VIEWED
+  ACCEPTED
+  REJECTED
+  REVISED
+  EXPIRED
+  WITHDRAWN
+}
+
+enum BookingStatus {
+  PENDING_VENDOR_CONFIRMATION
+  AWAITING_PAYMENT
+  CONFIRMED
+  IN_PROGRESS
+  SERVICE_COMPLETED
+  COMPLETED
+  CANCELLATION_REQUESTED
+  CANCELLED
+  DISPUTED
+}
+
+enum PaymentStatus {
+  INITIATED
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  PARTIALLY_REFUNDED
+  REFUNDED
+  RECONCILIATION_REQUIRED
+}
+
+enum SettlementStatus {
+  NOT_DUE
+  DUE
+  PROCESSING
+  PAID
+  FAILED
+  ON_HOLD
+}
+
+enum RefundStatus {
+  REQUESTED
+  APPROVED
+  PROCESSED
+  REJECTED
+}
+
+enum PayoutStatus {
+  REQUESTED
+  APPROVED
+  PAID
+  FAILED
+}
+
+enum MilestoneStatus {
+  PENDING
+  PAID
+}
+
+enum MilestoneDueRule {
+  ON_BOOKING
+  DAYS_BEFORE_EVENT
+  ON_COMPLETION
+}
+
+enum AvailabilityMode {
+  EXCLUSIVE
+  CAPACITY
+}
+
+enum Slot {
+  LUNCH
+  DINNER
+  FULL_DAY
+}
+
+enum OccupiedSlot {
+  LUNCH
+  DINNER
+}
+
+enum OccupancyKind {
+  HOLD
+  BOOKED
+  BLOCK
+}
+
+enum PriceUnit {
+  FLAT
+  PER_PERSON
+}
+
+enum IndoorOutdoor {
+  INDOOR
+  OUTDOOR
+  BOTH
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+}
+
+enum EventType {
+  DHOLKI
+  MEHNDI
+  NIKAH
+  BARAAT
+  WALIMA
+  ENGAGEMENT
+  OTHER
+}
+
+enum DocumentType {
+  CNIC_FRONT
+  CNIC_BACK
+  BUSINESS_REGISTRATION
+  OWNERSHIP_PROOF
+  NTN_CERTIFICATE
+  OTHER
+}
+
+enum DocReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum VendorRole {
+  OWNER
+  MANAGER
+  SALES
+  FINANCE
+  COORDINATOR
+}
+
+enum OtpPurpose {
+  VERIFY_PHONE
+  RESET_PASSWORD
+}
+
+enum InviteKind {
+  ADMIN
+  VENDOR
+}
+
+enum CollectedBy {
+  PLATFORM
+  VENDOR
+}
+
+enum LedgerType {
+  PAYMENT_RECEIVED
+  COMMISSION_EARNED
+  VENDOR_PAYABLE
+  REFUND_ISSUED
+  COMMISSION_REVERSED
+  VENDOR_PAYABLE_REVERSED
+  PAYOUT_SENT
+  COMMISSION_RECEIVED
+  ADJUSTMENT
+}
+
+enum ReviewStatus {
+  PUBLISHED
+  HIDDEN
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum TicketCategory {
+  VENDOR_NOT_RESPONDING
+  VENDOR_CANCELLED
+  PAYMENT_ISSUE
+  WRONG_PRICING
+  SERVICE_NOT_DELIVERED
+  REFUND_REQUEST
+  ACCOUNT
+  OTHER
+}
+
+enum DeliveryChannel {
+  EMAIL
+  SMS
+  PUSH
+}
+
+enum DeliveryStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+model User {
+  id              String     @id @default(uuid())
+  name            String
+  phone           String?    @unique
+  email           String?    @unique
+  passwordHash    String
+  avatarUrl       String?
+  cityId          String?
+  status          UserStatus @default(ACTIVE)
+  statusReason    String?
+  phoneVerifiedAt DateTime?
+  failedLogins    Int        @default(0)
+  lockedUntil     DateTime?
+  termsAcceptedAt DateTime?
+  deletedAt       DateTime?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  city          City?           @relation(fields: [cityId], references: [id])
+  sessions      Session[]
+  admin         AdminMember?
+  vendorMembers VendorMember[]
+  weddings      Wedding[]
+  saved         SavedListing[]
+  enquiries     Enquiry[]
+  quotations    Quotation[]
+  bookings      Booking[]
+  reviews       Review[]
+  notifications Notification[]
+  pushTokens    PushToken[]
+  tickets       SupportTicket[] @relation("TicketOwner")
+  assigned      SupportTicket[] @relation("TicketAssignee")
+  conversations Conversation[]
+  auditLogs     AuditLog[]
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Session {
+  id           String    @id @default(uuid())
+  userId       String
+  refreshHash  String
+  previousHash String?
+  rotatedAt    DateTime?
+  adminMfa     Boolean   @default(false)
+  userAgent    String?
+  ip           String?
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  createdAt    DateTime  @default(now())
+  lastUsedAt   DateTime  @default(now())
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model OtpCode {
+  id         String     @id @default(uuid())
+  target     String
+  purpose    OtpPurpose
+  codeHash   String
+  attempts   Int        @default(0)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime   @default(now())
+
+  @@index([target, purpose, createdAt])
+}
+
+model Invite {
+  id          String      @id @default(uuid())
+  kind        InviteKind
+  email       String
+  tokenHash   String      @unique
+  adminRoleId String?
+  vendorId    String?
+  vendorRole  VendorRole?
+  invitedById String
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime    @default(now())
+
+  @@index([email])
+}
+
+model AdminRole {
+  id          String        @id @default(uuid())
+  name        String        @unique
+  permissions String[]
+  isSystem    Boolean       @default(false)
+  createdAt   DateTime      @default(now())
+  members     AdminMember[]
+}
+
+model AdminMember {
+  id           String    @id @default(uuid())
+  userId       String    @unique
+  roleId       String
+  isSuper      Boolean   @default(false)
+  active       Boolean   @default(true)
+  totpSecret   String?
+  totpEnabled  Boolean   @default(false)
+  lastTotpStep BigInt?
+  createdAt    DateTime  @default(now())
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role         AdminRole @relation(fields: [roleId], references: [id])
+}
+
+model City {
+  id       String    @id @default(uuid())
+  name     String    @unique
+  slug     String    @unique
+  active   Boolean   @default(true)
+  areas    Area[]
+  users    User[]
+  vendors  Vendor[]
+  listings Listing[]
+  weddings Wedding[]
+}
+
+model Area {
+  id       String    @id @default(uuid())
+  cityId   String
+  name     String
+  slug     String
+  city     City      @relation(fields: [cityId], references: [id], onDelete: Cascade)
+  vendors  Vendor[]
+  listings Listing[]
+
+  @@unique([cityId, slug])
+}
+
+model Category {
+  id               String           @id @default(uuid())
+  name             String           @unique
+  slug             String           @unique
+  description      String?
+  iconKey          String?
+  imageUrl         String?
+  availabilityMode AvailabilityMode @default(CAPACITY)
+  /// null means not yet priced: quotations in this category are refused until an admin sets it.
+  commissionBps    Int?
+  amenityOptions   String[]
+  sortOrder        Int              @default(0)
+  active           Boolean          @default(true)
+  listings         Listing[]
+  vendors          Vendor[]
+  budgetItems      BudgetItem[]
+}
+
+model Vendor {
+  id                    String       @id @default(uuid())
+  slug                  String       @unique
+  businessName          String
+  description           String?
+  primaryCategoryId     String?
+  yearEstablished       Int?
+  employees             Int?
+  website               String?
+  instagram             String?
+  facebook              String?
+  phone                 String?
+  whatsapp              String?
+  email                 String?
+  cityId                String?
+  areaId                String?
+  address               String?
+  lat                   Float?
+  lng                   Float?
+  serviceAreas          String[]
+  workingHours          String?
+  logoUrl               String?
+  coverUrl              String?
+  status                VendorStatus @default(DRAFT)
+  statusReason          String?
+  featuredUntil         DateTime?
+  identityVerifiedAt    DateTime?
+  businessVerifiedAt    DateTime?
+  commissionBpsOverride Int?
+  bankName              String?
+  accountTitle          String?
+  iban                  String?
+  termsAcceptedAt       DateTime?
+  submittedAt           DateTime?
+  approvedAt            DateTime?
+  avgRating             Float        @default(0)
+  reviewCount           Int          @default(0)
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+
+  primaryCategory Category?        @relation(fields: [primaryCategoryId], references: [id])
+  city            City?            @relation(fields: [cityId], references: [id])
+  area            Area?            @relation(fields: [areaId], references: [id])
+  members         VendorMember[]
+  documents       VendorDocument[]
+  listings        Listing[]
+  enquiries       Enquiry[]
+  quotations      Quotation[]
+  bookings        Booking[]
+  reviews         Review[]
+  settlements     Settlement[]
+  payouts         Payout[]
+  conversations   Conversation[]
+  ledger          LedgerEntry[]
+
+  @@index([status])
+}
+
+model VendorMember {
+  id        String     @id @default(uuid())
+  vendorId  String
+  userId    String
+  role      VendorRole
+  active    Boolean    @default(true)
+  createdAt DateTime   @default(now())
+  vendor    Vendor     @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([vendorId, userId])
+  @@index([userId])
+}
+
+model VendorDocument {
+  id           String          @id @default(uuid())
+  vendorId     String
+  type         DocumentType
+  storageKey   String
+  filename     String
+  mimeType     String
+  size         Int
+  reviewStatus DocReviewStatus @default(PENDING)
+  reviewNote   String?
+  reviewedById String?
+  reviewedAt   DateTime?
+  createdAt    DateTime        @default(now())
+  vendor       Vendor          @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  @@index([vendorId])
+}
+
+model Listing {
+  id            String         @id @default(uuid())
+  vendorId      String
+  categoryId    String
+  slug          String         @unique
+  title         String
+  description   String
+  cityId        String
+  areaId        String?
+  address       String?
+  lat           Float?
+  lng           Float?
+  capacityMin   Int?
+  capacityMax   Int?
+  indoorOutdoor IndoorOutdoor?
+  amenities     String[]
+  startingPrice BigInt
+  priceUnit     PriceUnit      @default(FLAT)
+  dailyCapacity Int            @default(1)
+  status        ListingStatus  @default(DRAFT)
+  statusReason  String?
+  publishedAt   DateTime?
+  avgRating     Float          @default(0)
+  reviewCount   Int            @default(0)
+  viewCount     Int            @default(0)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  vendor    Vendor         @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  category  Category       @relation(fields: [categoryId], references: [id])
+  city      City           @relation(fields: [cityId], references: [id])
+  area      Area?          @relation(fields: [areaId], references: [id])
+  media     ListingMedia[]
+  packages  Package[]
+  addOns    AddOn[]
+  occupancy Occupancy[]
+  saved     SavedListing[]
+  enquiries Enquiry[]
+  bookings  Booking[]
+  reviews   Review[]
+
+  @@index([status, categoryId, cityId])
+  @@index([vendorId])
+}
+
+model ListingMedia {
+  id        String    @id @default(uuid())
+  listingId String
+  url       String
+  type      MediaType @default(IMAGE)
+  caption   String?
+  sortOrder Int       @default(0)
+  listing   Listing   @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([listingId])
+}
+
+model Package {
+  id          String    @id @default(uuid())
+  listingId   String
+  name        String
+  description String?
+  price       BigInt
+  priceUnit   PriceUnit @default(FLAT)
+  inclusions  String[]
+  exclusions  String[]
+  minGuests   Int?
+  maxGuests   Int?
+  active      Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  listing     Listing   @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  enquiries   Enquiry[]
+
+  @@index([listingId])
+}
+
+model AddOn {
+  id        String  @id @default(uuid())
+  listingId String
+  name      String
+  price     BigInt
+  listing   Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([listingId])
+}
+
+/// One row per occupied unit of a slot. The unique index is what makes double booking impossible,
+/// even when two requests race: each insert claims a (listing, date, slot, unit) or finds it taken.
+model Occupancy {
+  id        String        @id @default(uuid())
+  listingId String
+  date      DateTime      @db.Date
+  slot      OccupiedSlot
+  unit      Int
+  kind      OccupancyKind
+  bookingId String?
+  note      String?
+  expiresAt DateTime?
+  createdAt DateTime      @default(now())
+  listing   Listing       @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  booking   Booking?      @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@unique([listingId, date, slot, unit])
+  @@index([listingId, date])
+  @@index([bookingId])
+  @@index([expiresAt])
+}
+
+model SavedListing {
+  userId    String
+  listingId String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  listing   Listing  @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@id([userId, listingId])
+}
+
+model Wedding {
+  id          String          @id @default(uuid())
+  customerId  String
+  title       String
+  cityId      String?
+  budget      BigInt?
+  guestCount  Int?
+  dateFrom    DateTime?       @db.Date
+  dateTo      DateTime?       @db.Date
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  customer    User            @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  city        City?           @relation(fields: [cityId], references: [id])
+  events      WeddingEvent[]
+  budgetItems BudgetItem[]
+  checklist   ChecklistItem[]
+  enquiries   Enquiry[]
+
+  @@index([customerId])
+}
+
+model WeddingEvent {
+  id         String    @id @default(uuid())
+  weddingId  String
+  type       EventType
+  name       String?
+  date       DateTime? @db.Date
+  slot       Slot?
+  venue      String?
+  guestCount Int?
+  budget     BigInt?
+  wedding    Wedding   @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  enquiries  Enquiry[]
+
+  @@index([weddingId])
+}
+
+model BudgetItem {
+  id         String    @id @default(uuid())
+  weddingId  String
+  categoryId String?
+  label      String
+  planned    BigInt
+  wedding    Wedding   @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  category   Category? @relation(fields: [categoryId], references: [id])
+
+  @@index([weddingId])
+}
+
+model ChecklistItem {
+  id        String    @id @default(uuid())
+  weddingId String
+  title     String
+  done      Boolean   @default(false)
+  dueDate   DateTime? @db.Date
+  sortOrder Int       @default(0)
+  wedding   Wedding   @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+
+  @@index([weddingId])
+}
+
+model Enquiry {
+  id            String        @id @default(uuid())
+  code          String        @unique
+  groupId       String
+  customerId    String
+  vendorId      String
+  listingId     String
+  packageId     String?
+  weddingId     String?
+  eventId       String?
+  eventDate     DateTime      @db.Date
+  slot          Slot          @default(FULL_DAY)
+  guestCount    Int
+  budget        BigInt?
+  requirements  String
+  status        EnquiryStatus @default(NEW)
+  declineReason String?
+  viewedAt      DateTime?
+  expiresAt     DateTime
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  customer      User          @relation(fields: [customerId], references: [id])
+  vendor        Vendor        @relation(fields: [vendorId], references: [id])
+  listing       Listing       @relation(fields: [listingId], references: [id])
+  package       Package?      @relation(fields: [packageId], references: [id], onDelete: SetNull)
+  wedding       Wedding?      @relation(fields: [weddingId], references: [id], onDelete: SetNull)
+  event         WeddingEvent? @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  quotations    Quotation[]
+
+  @@index([vendorId, status])
+  @@index([customerId])
+  @@index([groupId])
+}
+
+model CancellationPolicy {
+  id         String      @id @default(uuid())
+  name       String
+  body       String
+  tiers      Json
+  active     Boolean     @default(true)
+  createdAt  DateTime    @default(now())
+  quotations Quotation[]
+}
+
+model Quotation {
+  id                   String               @id @default(uuid())
+  code                 String               @unique
+  enquiryId            String
+  vendorId             String
+  customerId           String
+  version              Int                  @default(1)
+  status               QuotationStatus      @default(DRAFT)
+  subtotal             BigInt
+  discount             BigInt               @default(0)
+  taxBps               Int                  @default(0)
+  tax                  BigInt               @default(0)
+  total                BigInt
+  notes                String?
+  terms                String?
+  cancellationPolicyId String
+  validUntil           DateTime?
+  validForHours        Int?
+  sentAt               DateTime?
+  viewedAt             DateTime?
+  respondedAt          DateTime?
+  reminderSentAt       DateTime?
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+  enquiry              Enquiry              @relation(fields: [enquiryId], references: [id])
+  vendor               Vendor               @relation(fields: [vendorId], references: [id])
+  customer             User                 @relation(fields: [customerId], references: [id])
+  cancellationPolicy   CancellationPolicy   @relation(fields: [cancellationPolicyId], references: [id])
+  lines                QuotationLine[]
+  milestones           QuotationMilestone[]
+  booking              Booking?
+
+  @@index([enquiryId])
+  @@index([vendorId, status])
+  @@index([customerId, status])
+}
+
+model QuotationLine {
+  id          String    @id @default(uuid())
+  quotationId String
+  description String
+  quantity    Int
+  unitPrice   BigInt
+  amount      BigInt
+  sortOrder   Int       @default(0)
+  quotation   Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+
+  @@index([quotationId])
+}
+
+model QuotationMilestone {
+  id          String           @id @default(uuid())
+  quotationId String
+  label       String
+  shareBps    Int
+  amount      BigInt
+  dueRule     MilestoneDueRule
+  dueDays     Int?
+  sortOrder   Int              @default(0)
+  quotation   Quotation        @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+
+  @@index([quotationId])
+}
+
+model Booking {
+  id                     String             @id @default(uuid())
+  code                   String             @unique
+  quotationId            String             @unique
+  customerId             String
+  vendorId               String
+  listingId              String
+  eventDate              DateTime           @db.Date
+  slot                   Slot
+  guestCount             Int
+  status                 BookingStatus      @default(PENDING_VENDOR_CONFIRMATION)
+  /// Snapshots at acceptance: later category or policy changes never alter an agreed booking.
+  totalAmount            BigInt
+  commissionBps          Int
+  commissionTotal        BigInt
+  cancellationPolicyName String
+  cancellationPolicyBody String
+  cancellationTiers      Json
+  holdExpiresAt          DateTime?
+  vendorConfirmedAt      DateTime?
+  confirmedAt            DateTime?
+  serviceCompletedAt     DateTime?
+  customerConfirmedAt    DateTime?
+  completedAt            DateTime?
+  settlementDueAt        DateTime?
+  cancelledAt            DateTime?
+  cancelReason           String?
+  cancelledByType        String?
+  adminNotes             String?
+  flagged                Boolean            @default(false)
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+  customer               User               @relation(fields: [customerId], references: [id])
+  vendor                 Vendor             @relation(fields: [vendorId], references: [id])
+  listing                Listing            @relation(fields: [listingId], references: [id])
+  quotation              Quotation          @relation(fields: [quotationId], references: [id])
+  milestones             BookingMilestone[]
+  timeline               BookingEvent[]
+  payments               Payment[]
+  occupancy              Occupancy[]
+  review                 Review?
+  settlements            Settlement[]
+  tickets                SupportTicket[]
+  ledger                 LedgerEntry[]
+
+  @@index([customerId])
+  @@index([vendorId, status])
+  @@index([status])
+  @@index([eventDate])
+}
+
+model BookingMilestone {
+  id         String           @id @default(uuid())
+  bookingId  String
+  label      String
+  amount     BigInt
+  dueRule    MilestoneDueRule
+  dueDate    DateTime?        @db.Date
+  sortOrder  Int              @default(0)
+  status     MilestoneStatus  @default(PENDING)
+  paidAt     DateTime?
+  remindedAt DateTime?
+  booking    Booking          @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  payments   Payment[]
+
+  @@index([bookingId])
+}
+
+model BookingEvent {
+  id         String         @id @default(uuid())
+  bookingId  String
+  fromStatus BookingStatus?
+  toStatus   BookingStatus?
+  actorId    String?
+  actorType  String
+  note       String?
+  createdAt  DateTime       @default(now())
+  booking    Booking        @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId, createdAt])
+}
+
+model Payment {
+  id                 String           @id @default(uuid())
+  code               String           @unique
+  bookingId          String
+  milestoneId        String
+  amount             BigInt
+  commission         BigInt?
+  providerFee        BigInt?
+  refundedAmount     BigInt           @default(0)
+  commissionReversed BigInt           @default(0)
+  status             PaymentStatus    @default(INITIATED)
+  provider           String
+  collectedBy        CollectedBy      @default(PLATFORM)
+  providerRef        String?          @unique
+  idempotencyKey     String           @unique
+  checkoutUrl        String?
+  failureReason      String?
+  succeededAt        DateTime?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  booking            Booking          @relation(fields: [bookingId], references: [id])
+  milestone          BookingMilestone @relation(fields: [milestoneId], references: [id])
+  refunds            Refund[]
+  settlement         Settlement?
+  ledger             LedgerEntry[]
+
+  @@index([bookingId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model WebhookEvent {
+  id          String    @id @default(uuid())
+  provider    String
+  eventId     String
+  payload     Json
+  processedAt DateTime?
+  error       String?
+  createdAt   DateTime  @default(now())
+
+  @@unique([provider, eventId])
+}
+
+model Refund {
+  id            String        @id @default(uuid())
+  code          String        @unique
+  paymentId     String
+  amount        BigInt
+  reason        String
+  status        RefundStatus  @default(REQUESTED)
+  requestedById String?
+  decidedById   String?
+  decisionNote  String?
+  providerRef   String?
+  createdAt     DateTime      @default(now())
+  processedAt   DateTime?
+  payment       Payment       @relation(fields: [paymentId], references: [id])
+  ledger        LedgerEntry[]
+
+  @@index([status])
+  @@index([paymentId])
+}
+
+/// Append-only: a database trigger rejects UPDATE and DELETE. Corrections are new entries.
+model LedgerEntry {
+  id        String     @id @default(uuid())
+  type      LedgerType
+  amount    BigInt
+  memo      String?
+  actorId   String?
+  bookingId String?
+  paymentId String?
+  refundId  String?
+  payoutId  String?
+  vendorId  String?
+  createdAt DateTime   @default(now())
+  booking   Booking?   @relation(fields: [bookingId], references: [id])
+  payment   Payment?   @relation(fields: [paymentId], references: [id])
+  refund    Refund?    @relation(fields: [refundId], references: [id])
+  payout    Payout?    @relation(fields: [payoutId], references: [id])
+  vendor    Vendor?    @relation(fields: [vendorId], references: [id])
+
+  @@index([type, createdAt])
+  @@index([vendorId])
+  @@index([bookingId])
+}
+
+model Settlement {
+  id         String           @id @default(uuid())
+  vendorId   String
+  bookingId  String
+  paymentId  String           @unique
+  gross      BigInt
+  commission BigInt
+  payable    BigInt
+  clawback   BigInt           @default(0)
+  status     SettlementStatus @default(NOT_DUE)
+  payoutId   String?
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+  vendor     Vendor           @relation(fields: [vendorId], references: [id])
+  booking    Booking          @relation(fields: [bookingId], references: [id])
+  payment    Payment          @relation(fields: [paymentId], references: [id])
+  payout     Payout?          @relation(fields: [payoutId], references: [id])
+
+  @@index([vendorId, status])
+}
+
+model Payout {
+  id             String        @id @default(uuid())
+  code           String        @unique
+  vendorId       String
+  amount         BigInt
+  status         PayoutStatus  @default(REQUESTED)
+  bankName       String
+  accountTitle   String
+  iban           String
+  clawbackNetted BigInt        @default(0)
+  reference      String?
+  note           String?
+  requestedById  String
+  decidedById    String?
+  paidAt         DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  vendor         Vendor        @relation(fields: [vendorId], references: [id])
+  settlements    Settlement[]
+  ledger         LedgerEntry[]
+
+  @@index([status])
+  @@index([vendorId])
+}
+
+model Review {
+  id             String         @id @default(uuid())
+  bookingId      String         @unique
+  customerId     String
+  vendorId       String
+  listingId      String
+  rating         Int
+  comment        String
+  photos         String[]
+  status         ReviewStatus   @default(PUBLISHED)
+  reply          String?
+  repliedAt      DateTime?
+  moderationNote String?
+  createdAt      DateTime       @default(now())
+  booking        Booking        @relation(fields: [bookingId], references: [id])
+  customer       User           @relation(fields: [customerId], references: [id])
+  vendor         Vendor         @relation(fields: [vendorId], references: [id])
+  listing        Listing        @relation(fields: [listingId], references: [id])
+  reports        ReviewReport[]
+
+  @@index([listingId, status])
+  @@index([vendorId])
+}
+
+model ReviewReport {
+  id         String    @id @default(uuid())
+  reviewId   String
+  reporterId String
+  reason     String
+  resolvedAt DateTime?
+  createdAt  DateTime  @default(now())
+  review     Review    @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  @@unique([reviewId, reporterId])
+  @@index([resolvedAt])
+}
+
+model Conversation {
+  id             String    @id @default(uuid())
+  customerId     String
+  vendorId       String
+  lastMessageAt  DateTime  @default(now())
+  customerReadAt DateTime?
+  vendorReadAt   DateTime?
+  createdAt      DateTime  @default(now())
+  customer       User      @relation(fields: [customerId], references: [id])
+  vendor         Vendor    @relation(fields: [vendorId], references: [id])
+  messages       Message[]
+
+  @@unique([customerId, vendorId])
+  @@index([vendorId, lastMessageAt])
+}
+
+model Message {
+  id             String       @id @default(uuid())
+  conversationId String
+  senderId       String
+  fromVendor     Boolean
+  body           String
+  createdAt      DateTime     @default(now())
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+}
+
+model Notification {
+  id        String    @id @default(uuid())
+  userId    String
+  type      String
+  title     String
+  body      String
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model PushToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  platform  String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+/// Outbox: messages are committed with the business change, then delivered and retried by a worker.
+model Delivery {
+  id            String          @id @default(uuid())
+  channel       DeliveryChannel
+  recipient     String
+  subject       String?
+  body          String
+  status        DeliveryStatus  @default(PENDING)
+  attempts      Int             @default(0)
+  nextAttemptAt DateTime        @default(now())
+  lastError     String?
+  sentAt        DateTime?
+  createdAt     DateTime        @default(now())
+
+  @@index([status, nextAttemptAt])
+}
+
+model SupportTicket {
+  id           String          @id @default(uuid())
+  code         String          @unique
+  userId       String
+  bookingId    String?
+  category     TicketCategory
+  subject      String
+  status       TicketStatus    @default(OPEN)
+  priority     TicketPriority  @default(NORMAL)
+  assignedToId String?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  user         User            @relation("TicketOwner", fields: [userId], references: [id])
+  assignedTo   User?           @relation("TicketAssignee", fields: [assignedToId], references: [id])
+  booking      Booking?        @relation(fields: [bookingId], references: [id])
+  messages     TicketMessage[]
+
+  @@index([status])
+  @@index([userId])
+}
+
+model TicketMessage {
+  id        String        @id @default(uuid())
+  ticketId  String
+  senderId  String
+  fromStaff Boolean       @default(false)
+  internal  Boolean       @default(false)
+  body      String
+  createdAt DateTime      @default(now())
+  ticket    SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId])
+}
+
+model ContactMessage {
+  id        String   @id @default(uuid())
+  name      String
+  email     String
+  phone     String?
+  message   String
+  createdAt DateTime @default(now())
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  actorId   String?
+  action    String
+  entity    String
+  entityId  String?
+  reason    String?
+  before    Json?
+  after     Json?
+  ip        String?
+  createdAt DateTime @default(now())
+  actor     User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([entity, entityId])
+}
+
+model PlatformSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+model Sequence {
+  name  String @id
+  value Int    @default(0)
+}

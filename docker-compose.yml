@@ -1,0 +1,45 @@
+# Production-style stack. Copy .env.production.example to .env.production and fill it in first.
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mehfil
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: mehfil
+    volumes: [db:/var/lib/postgresql/data]
+    healthcheck:
+      test: pg_isready -U mehfil
+      interval: 5s
+      retries: 20
+
+  api:
+    build: { context: ., dockerfile: apps/api/Dockerfile }
+    restart: unless-stopped
+    env_file: .env.production
+    environment:
+      DATABASE_URL: postgresql://mehfil:${POSTGRES_PASSWORD}@db:5432/mehfil
+    depends_on:
+      db: { condition: service_healthy }
+    volumes: [uploads:/repo/apps/api/uploads]
+    ports: ['127.0.0.1:4000:4000']
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_ORIGIN: ${API_PUBLIC_URL}
+        NEXT_PUBLIC_SITE_URL: ${WEB_URL}
+        NEXT_PUBLIC_LEGAL_NAME: ${LEGAL_NAME:-Mehfil}
+        NEXT_PUBLIC_SUPPORT_EMAIL: ${SUPPORT_EMAIL:-}
+    restart: unless-stopped
+    environment:
+      API_URL: http://api:4000
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?set INTERNAL_API_KEY}
+    depends_on: [api]
+    ports: ['127.0.0.1:3000:3000']
+
+volumes:
+  db:
+  uploads:

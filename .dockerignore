@@ -1,0 +1,11 @@
+**/node_modules
+**/dist
+**/.next
+**/.expo
+**/.env
+**/.env.local
+**/.pg-data
+**/uploads
+.git
+.bundle
+apps/mobile

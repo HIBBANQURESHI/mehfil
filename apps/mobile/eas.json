@@ -1,0 +1,9 @@
+{
+  "cli": { "appVersionSource": "remote" },
+  "build": {
+    "development": { "developmentClient": true, "distribution": "internal", "env": { "EXPO_PUBLIC_API_URL": "http://10.0.2.2:4000" } },
+    "preview": { "distribution": "internal", "android": { "buildType": "apk" } },
+    "production": { "autoIncrement": true, "android": { "buildType": "app-bundle" } }
+  },
+  "submit": { "production": {} }
+}
