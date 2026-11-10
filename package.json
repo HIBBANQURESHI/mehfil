@@ -17,15 +17,15 @@
     "dev:mobile": "npm run start -w @mehfil/mobile",
     "build": "npm run build -w @mehfil/shared && npm run build -w @mehfil/api && npm run build -w @mehfil/web",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run test -w @mehfil/shared && npm run test:e2e -w @mehfil/api"
+    "test": "npm run test -w @mehfil/shared && npm run test:e2e -w @mehfil/api",
+    "db:migrate": "npm run db:migrate -w @mehfil/api",
+    "db:seed": "npm run db:seed -w @mehfil/api",
+    "db:seed:demo": "npm run db:seed:demo -w @mehfil/api",
+    "admin:create": "npm run admin:create -w @mehfil/api"
   },
   "overrides": {
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "react-native-svg": "15.16.0"
-  },
-  "dependencies": {
-    "otplib": "^12.0.1",
-    "playwright-core": "^1.65.0"
   }
 }

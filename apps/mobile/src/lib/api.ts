@@ -1,9 +1,16 @@
+import Constants from 'expo-constants';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 import useSWR, { SWRConfiguration } from 'swr';
 
-export const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:4000';
-export const SITE_URL = process.env.EXPO_PUBLIC_SITE_URL ?? 'http://localhost:3000';
+const LOCAL = /\/\/(localhost|127\.0\.0\.1)(?=[:/]|$)/;
+// On a phone, "localhost" is the phone itself. During development, point it at the computer Expo is serving
+// the app from instead. Real https addresses are left untouched.
+const devHost = Platform.OS === 'web' ? undefined : Constants.expoConfig?.hostUri?.split(':')[0];
+export const toDevice = (url: string) => (devHost ? url.replace(LOCAL, `//${devHost}`) : url);
+
+export const API_URL = toDevice(process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:4000');
+export const SITE_URL = toDevice(process.env.EXPO_PUBLIC_SITE_URL ?? 'http://localhost:3000');
 
 const ACCESS = 'mf_access', REFRESH = 'mf_refresh';
 

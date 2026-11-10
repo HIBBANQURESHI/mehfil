@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button, c, Card, ErrorView, Field, font, Loading, Row, Text } from '@/components/ui';
-import { api, useApi } from '@/lib/api';
+import { api, toDevice, useApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { fmtDate } from '@/lib/format';
 
@@ -26,7 +26,7 @@ export default function Listing() {
     <SafeAreaView edges={['bottom']} style={{ flex: 1, backgroundColor: c.warmWhite }}>
       <Stack.Screen options={{ title: '', headerRight: () => <Pressable accessibilityRole="button" accessibilityLabel={saved ? 'Remove from saved' : 'Save'} onPress={save}><Heart color={saved ? c.ruby : c.text} fill={saved ? c.ruby : 'transparent'} size={24} /></Pressable> }} />
       <ScrollView>
-        <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false}>{l.media.filter((m: any) => m.type === 'IMAGE').map((m: any) => <Image key={m.id} source={m.url} style={{ width, height: width * 0.72, backgroundColor: c.blush }} contentFit="cover" accessibilityLabel={m.caption ?? l.title} />)}</ScrollView>
+        <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false}>{l.media.filter((m: any) => m.type === 'IMAGE').map((m: any) => <Image key={m.id} source={toDevice(m.url)} style={{ width, height: width * 0.72, backgroundColor: c.blush }} contentFit="cover" accessibilityLabel={m.caption ?? l.title} />)}</ScrollView>
         <View style={{ padding: 16, gap: 16 }}>
           <View style={{ gap: 4 }}>
             <Text variant="small">{l.category.name}</Text><Text variant="h1">{l.title}</Text><Text variant="muted">by {l.vendor.businessName}</Text>
