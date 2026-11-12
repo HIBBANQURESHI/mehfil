@@ -29,7 +29,7 @@ async function main() {
   const city = await prisma.city.findUniqueOrThrow({ where: { slug: 'karachi' }, include: { areas: true } });
 
   // Demo-only rates, so the booking flow can be tried end to end. Real rates are set in Admin > Categories.
-  for (const [slug, commissionBps] of [['banquet-halls', 500], ['marquees', 500], ['catering', 600], ['decoration', 900], ['photography', 900], ['makeup-artists', 900], ['videography', 900], ['wedding-planners', 700]] as const) await prisma.category.update({ where: { slug }, data: { commissionBps } });
+  for (const [slug, commissionBps] of [['banquet-halls', 300], ['marquees', 300], ['catering', 300], ['decoration', 300], ['photography', 300], ['makeup-artists', 300], ['videography', 300], ['wedding-planners', 300]] as const) await prisma.category.update({ where: { slug }, data: { commissionBps } });
   if (!(await prisma.cancellationPolicy.count())) await prisma.cancellationPolicy.create({ data: { name: 'Demo policy', body: 'Sample policy for local testing only.', tiers: [{ daysBefore: 30, refundBps: 9000 }, { daysBefore: 7, refundBps: 5000 }, { daysBefore: 0, refundBps: 0 }] } });
 
   for (const [i, name] of NAMES.entries()) {

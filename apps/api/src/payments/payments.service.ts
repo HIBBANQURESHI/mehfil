@@ -1,6 +1,9 @@
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Payment, Prisma } from '@prisma/client';
 import { commissionForPayment, commissionReversalForRefund, formatPKR } from '@mehfil/shared';
+import { CommissionService } from './commission.service';
+import { SettingsService } from '../common/settings.service';
+import { addDays, dateOnly, today } from '../common/http';
 import { AuthCtx } from '../common/auth';
 import { AuditService } from '../common/audit.service';
 import { env } from '../common/config';
@@ -22,9 +25,11 @@ export class PaymentsService {
   constructor(
     private prisma: PrismaService, private notifications: NotificationsService, private bookings: BookingsService,
     private availability: AvailabilityService, private audit: AuditService, @Inject(PAYMENT_PROVIDER) public provider: PaymentProvider,
+    private commission: CommissionService, private settings: SettingsService,
   ) {}
 
-  private async payableMilestone(tx: Tx, bookingId: string, milestoneId: string) {
+  /** `heldForCash`: cash recorded while the hold was valid keeps the date (the sweeper skips it), so expiry no longer applies. */
+  private async payableMilestone(tx: Tx, bookingId: string, milestoneId: string, heldForCash = false) {
     const booking = await tx.booking.findUnique({ where: { id: bookingId }, include: { milestones: { orderBy: { sortOrder: 'asc' } }, listing: { select: { title: true } } } });
     if (!booking) throw new NotFoundException('Booking not found');
     const next = booking.milestones.find((m) => m.status === 'PENDING');
@@ -32,7 +37,7 @@ export class PaymentsService {
     if (next.id !== milestoneId) throw new ConflictException({ message: 'Please pay the earlier instalment first.', code: 'MILESTONE_ORDER' });
     if (next.sortOrder === 0) {
       if (booking.status !== 'AWAITING_PAYMENT') throw new ConflictException({ message: 'This booking is not ready for payment.', code: 'NOT_PAYABLE' });
-      if (booking.holdExpiresAt && booking.holdExpiresAt < new Date()) throw new ConflictException({ message: 'The hold on this date has expired.', code: 'HOLD_EXPIRED' });
+      if (!heldForCash && booking.holdExpiresAt && booking.holdExpiresAt < new Date()) throw new ConflictException({ message: 'The hold on this date has expired.', code: 'HOLD_EXPIRED' });
     } else if (!CAN_PAY_LATER_MILESTONE.includes(booking.status)) throw new ConflictException({ message: 'This booking cannot take payments right now.', code: 'NOT_PAYABLE' });
     return { booking, milestone: next };
   }
@@ -46,7 +51,9 @@ export class PaymentsService {
       await this.prisma.lockBooking(tx, bookingId);
       const { booking, milestone } = await this.payableMilestone(tx, bookingId, milestoneId);
       const open = await tx.payment.findFirst({ where: { milestoneId, status: { in: ['INITIATED', 'PROCESSING'] }, checkoutUrl: { not: null } } });
-      if (open) return { existing: open };
+      if (open && open.createdAt > new Date(Date.now() - 45 * 60_000)) return { existing: open };
+      // Older checkouts have expired at the gateway. If one is somehow paid later, it is still applied (or flagged), never lost.
+      if (open) await tx.payment.update({ where: { id: open.id }, data: { status: 'FAILED', failureReason: 'Checkout expired', checkoutUrl: null } });
       const attempts = await tx.payment.count({ where: { milestoneId } });
       const payment = await tx.payment.create({ data: { code: await this.prisma.nextCode(tx, 'PAY'), bookingId, milestoneId, amount: milestone.amount, provider: this.provider.name, idempotencyKey: `${milestoneId}:${attempts}` } });
       return { payment, description: `${booking.code} ${milestone.label}: ${booking.listing.title}` };
@@ -71,17 +78,23 @@ export class PaymentsService {
   async handleWebhook(providerName: string, rawBody: Buffer, headers: Record<string, string | string[] | undefined>) {
     if (providerName !== this.provider.name) throw new NotFoundException();
     const evt = this.provider.parseWebhook(rawBody, headers);
+    if (!evt) return { ok: true, ignored: true };
     return this.processEvent(evt, JSON.parse(rawBody.toString('utf8')));
   }
 
   async processEvent(evt: WebhookEventData, payload: Prisma.InputJsonValue) {
     const providerName = this.provider.name;
-    const stored = await this.prisma.webhookEvent.upsert({ where: { provider_eventId: { provider: providerName, eventId: evt.eventId } }, create: { provider: providerName, eventId: evt.eventId, payload }, update: {} });
+    const key = { provider_eventId: { provider: providerName, eventId: evt.eventId } };
+    // Two copies of one event can arrive at the same instant; the second simply finds the row the first created.
+    const stored = await this.prisma.webhookEvent.upsert({ where: key, create: { provider: providerName, eventId: evt.eventId, payload }, update: {} })
+      .catch(async (e) => { if ((e as { code?: string }).code !== 'P2002') throw e; return this.prisma.webhookEvent.findUniqueOrThrow({ where: key }); });
     if (stored.processedAt) return { ok: true, duplicate: true };
 
     return this.prisma.$transaction(async (tx) => {
       const ref = await tx.payment.findUnique({ where: { providerRef: evt.providerRef } });
       if (!ref) {
+        const cp = await tx.commissionPayment.findUnique({ where: { providerRef: evt.providerRef } });
+        if (cp) return this.applyCommissionPayment(tx, cp.id, evt, stored.id);
         await tx.webhookEvent.update({ where: { id: stored.id }, data: { error: 'Unknown payment reference' } });
         this.log.error(`Webhook ${evt.eventId} references unknown payment ${evt.providerRef}`);
         return { ok: true, unknown: true };
@@ -104,6 +117,32 @@ export class PaymentsService {
       await this.applySuccess(tx, payment, { providerFee: evt.fee, actorType: 'SYSTEM' });
       return { ok: true };
     });
+  }
+
+  /**
+   * Confirms payments with the gateway itself when a customer returns from checkout, or when a webhook never
+   * arrived (Safepay can't reach a laptop). The result goes through the same idempotent path as a webhook.
+   */
+  async confirmWithGateway(providerRef: string) {
+    if (!this.provider.verify) return { status: 'unknown' as const };
+    const evt = await this.provider.verify(providerRef);
+    if (!evt) return { status: 'pending' as const };
+    await this.processEvent(evt, { source: 'verify', providerRef });
+    const p = (await this.prisma.payment.findUnique({ where: { providerRef } })) ?? (await this.prisma.commissionPayment.findUnique({ where: { providerRef } }));
+    return { status: p?.status === 'SUCCEEDED' ? ('success' as const) : ('review' as const) };
+  }
+
+  /** Background safety net: checks recent unfinished checkouts with the gateway. */
+  async reconcileOpenCheckouts() {
+    if (!this.provider.verify) return;
+    const since = new Date(Date.now() - 48 * 3_600_000);
+    const before = new Date(Date.now() - 2 * 60_000);
+    const where = { provider: this.provider.name, status: 'INITIATED' as const, providerRef: { not: null }, createdAt: { gt: since, lt: before } };
+    const [payments, commissions] = await Promise.all([
+      this.prisma.payment.findMany({ where, select: { providerRef: true }, take: 50 }),
+      this.prisma.commissionPayment.findMany({ where, select: { providerRef: true }, take: 50 }),
+    ]);
+    for (const p of [...payments, ...commissions]) await this.confirmWithGateway(p.providerRef!).catch((e) => this.log.warn(`Checking ${p.providerRef}: ${(e as Error).message}`));
   }
 
   private async flagForReconciliation(tx: Tx, payment: Payment, reason: string) {
@@ -143,20 +182,151 @@ export class PaymentsService {
       ...(payment.collectedBy === 'PLATFORM' ? [{ ...refs, type: 'VENDOR_PAYABLE' as const, amount: net }] : []),
     ] });
     if (payment.collectedBy === 'PLATFORM') await tx.settlement.create({ data: { vendorId: booking.vendorId, bookingId: booking.id, paymentId: payment.id, gross: payment.amount, commission, payable: net } });
-    await this.notifications.notify(tx, { userId: booking.customerId, type: 'PAYMENT_SUCCEEDED', title: 'Payment successful', body: `We received ${formatPKR(Number(payment.amount))} for ${booking.code}.`, link: `/account/bookings/${booking.id}` });
+    const byVendor = payment.collectedBy === 'VENDOR';
+    await this.notifications.notify(tx, { userId: booking.customerId, type: 'PAYMENT_SUCCEEDED', title: byVendor ? 'Payment recorded' : 'Payment successful', body: byVendor ? `${formatPKR(Number(payment.amount))} paid to the vendor is now recorded on ${booking.code}.` : `We received ${formatPKR(Number(payment.amount))} for ${booking.code}.`, link: `/account/bookings/${booking.id}` });
     await this.notifications.notifyVendor(tx, booking.vendorId, { type: 'PAYMENT_RECEIVED', title: 'Payment received', body: `${formatPKR(Number(payment.amount))} recorded on ${booking.code}.`, link: `/vendor/bookings/${booking.id}` });
   }
 
-  /** Pilot route for when the customer paid the vendor directly. Commission then becomes money the vendor owes Mehfil. */
+  /** Money the vendor collected themselves. The booking moves on as usual, and the commission on it becomes owed by the vendor. */
+  private async collectByVendor(tx: Tx, bookingId: string, milestoneId: string, ref: string, provider: 'manual' | 'cash', actor: { type: 'SYSTEM' | 'ADMIN'; id?: string }) {
+    const { milestone } = await this.payableMilestone(tx, bookingId, milestoneId, provider === 'cash');
+    const { commissionDueDays } = await this.settings.all();
+    const payment = await tx.payment.create({ data: { code: await this.prisma.nextCode(tx, 'PAY'), bookingId, milestoneId, amount: milestone.amount, provider, collectedBy: 'VENDOR', providerRef: ref, idempotencyKey: ref, commissionDueAt: addDays(new Date(), commissionDueDays) } });
+    await this.applySuccess(tx, payment, { actorType: actor.type, actorId: actor.id });
+    const after = await tx.payment.findUniqueOrThrow({ where: { id: payment.id } });
+    if (after.status !== 'SUCCEEDED') throw new ConflictException({ message: 'This payment could not be applied to the booking. Our team has been alerted.', code: 'RECONCILE' });
+    return after;
+  }
+
+  /** Admin route for a payment made straight to the vendor, with proof such as a bank reference. */
   async recordManual(auth: AuthCtx, bookingId: string, milestoneId: string, reference: string, reason: string) {
     return this.prisma.$transaction(async (tx) => {
       await this.prisma.lockBooking(tx, bookingId);
-      const { milestone } = await this.payableMilestone(tx, bookingId, milestoneId);
-      const payment = await tx.payment.create({ data: { code: await this.prisma.nextCode(tx, 'PAY'), bookingId, milestoneId, amount: milestone.amount, provider: 'manual', collectedBy: 'VENDOR', providerRef: `manual:${milestoneId}`, idempotencyKey: `manual:${milestoneId}` } });
-      await this.applySuccess(tx, payment, { actorType: 'ADMIN', actorId: auth.userId });
-      await this.audit.record({ actorId: auth.userId, action: 'payment.manual_recorded', entity: 'Payment', entityId: payment.id, reason, after: { reference, amount: milestone.amount } }, tx);
-      return tx.payment.findUniqueOrThrow({ where: { id: payment.id } });
+      const payment = await this.collectByVendor(tx, bookingId, milestoneId, `manual:${milestoneId}`, 'manual', { type: 'ADMIN', id: auth.userId });
+      await this.audit.record({ actorId: auth.userId, action: 'payment.manual_recorded', entity: 'Payment', entityId: payment.id, reason, after: { reference, amount: payment.amount } }, tx);
+      return payment;
     });
+  }
+
+  // ---- Cash ----------------------------------------------------------------
+
+  /** The customer says how they'll pay an instalment. It only informs the vendor; it moves no money. */
+  async setMethod(auth: AuthCtx, bookingId: string, milestoneId: string, method: 'ONLINE' | 'CASH') {
+    const { allowCash, requireOnlineDeposit } = await this.settings.all();
+    return this.prisma.$transaction(async (tx) => {
+      const b = await tx.booking.findFirst({ where: { id: bookingId, customerId: auth.userId }, include: { milestones: true } });
+      if (!b) throw new NotFoundException('Booking not found');
+      const m = b.milestones.find((x) => x.id === milestoneId);
+      if (!m || m.status !== 'PENDING') throw new NotFoundException('Instalment not found');
+      if (method === 'CASH') {
+        if (!allowCash) throw new ConflictException({ message: 'Cash payments are not available.', code: 'CASH_DISABLED' });
+        if (requireOnlineDeposit && m.sortOrder === 0) throw new ConflictException({ message: 'The booking advance must be paid online.', code: 'ONLINE_DEPOSIT_REQUIRED' });
+      }
+      await tx.bookingMilestone.update({ where: { id: m.id }, data: { preferredMethod: method } });
+      if (method === 'CASH') await this.notifications.notifyVendor(tx, b.vendorId, { type: 'CASH_PLANNED', title: 'Customer will pay in cash', body: `${m.label} of ${formatPKR(Number(m.amount))} for ${b.code} will be paid to you in cash. Record it when you receive it.`, link: `/vendor/bookings/${b.id}` });
+      return { ok: true };
+    });
+  }
+
+  /** The vendor records cash in hand. Nothing changes on the booking until the customer confirms it. */
+  async recordCash(auth: AuthCtx, bookingId: string, input: { milestoneId: string; receivedOn: string; note?: string | null }) {
+    const { allowCash, requireOnlineDeposit } = await this.settings.all();
+    if (!allowCash) throw new ConflictException({ message: 'Cash payments are not available.', code: 'CASH_DISABLED' });
+    if (dateOnly(input.receivedOn) > today()) throw new BadRequestException({ message: 'The date received cannot be in the future.', fields: { receivedOn: 'Choose today or earlier' } });
+    return this.prisma.$transaction(async (tx) => {
+      await this.prisma.lockBooking(tx, bookingId);
+      const b = await tx.booking.findFirst({ where: { id: bookingId, vendorId: auth.vendor!.id } });
+      if (!b) throw new NotFoundException('Booking not found');
+      const { milestone } = await this.payableMilestone(tx, bookingId, input.milestoneId);
+      if (requireOnlineDeposit && milestone.sortOrder === 0) throw new ConflictException({ message: 'The booking advance must be paid online.', code: 'ONLINE_DEPOSIT_REQUIRED' });
+      if (await tx.cashReceipt.count({ where: { milestoneId: milestone.id, status: { in: ['PENDING', 'DISPUTED'] } } })) throw new ConflictException({ message: 'Cash for this instalment is already waiting for the customer to confirm.', code: 'CASH_PENDING' });
+      const receipt = await tx.cashReceipt.create({ data: { bookingId, milestoneId: milestone.id, amount: milestone.amount, receivedOn: dateOnly(input.receivedOn), note: input.note, recordedById: auth.userId } });
+      await this.notifications.notify(tx, { userId: b.customerId, type: 'CASH_TO_CONFIRM', title: 'Please confirm your cash payment', body: `Your vendor has marked ${formatPKR(Number(milestone.amount))} as received in cash for ${b.code}. Please confirm.`, link: `/account/bookings/${b.id}` });
+      return receipt;
+    });
+  }
+
+  /** Turns a cash receipt into a real payment. Used by the customer, by an admin, and after the confirmation window. */
+  async confirmCash(receiptId: string, by: { type: 'CUSTOMER' | 'ADMIN' | 'SYSTEM'; id?: string; customerId?: string }) {
+    return this.prisma.$transaction(async (tx) => {
+      const r = await tx.cashReceipt.findUnique({ where: { id: receiptId }, include: { booking: true } });
+      if (!r || (by.customerId && r.booking.customerId !== by.customerId)) throw new NotFoundException('Cash payment not found');
+      await this.prisma.lockBooking(tx, r.bookingId);
+      const allowed = by.type === 'CUSTOMER' || by.type === 'SYSTEM' ? ['PENDING'] : ['PENDING', 'DISPUTED'];
+      const claimed = await tx.cashReceipt.updateMany({ where: { id: r.id, status: { in: allowed as never[] } }, data: { status: 'CONFIRMED', decidedById: by.id, decidedAt: new Date(), autoConfirmed: by.type === 'SYSTEM' } });
+      if (!claimed.count) throw new ConflictException('This cash payment has already been handled.');
+      const payment = await this.collectByVendor(tx, r.bookingId, r.milestoneId, `cash:${r.id}`, 'cash', { type: by.type === 'ADMIN' ? 'ADMIN' : 'SYSTEM', id: by.id });
+      await tx.cashReceipt.update({ where: { id: r.id }, data: { paymentId: payment.id } });
+      await tx.bookingEvent.create({ data: { bookingId: r.bookingId, actorId: by.id, actorType: by.type, note: `${formatPKR(Number(r.amount))} cash ${by.type === 'SYSTEM' ? 'confirmed automatically' : 'confirmed'}` } });
+      return { ok: true, paymentId: payment.id };
+    });
+  }
+
+  async disputeCash(auth: AuthCtx, bookingId: string, receiptId: string, reason: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const r = await tx.cashReceipt.findFirst({ where: { id: receiptId, bookingId, booking: { customerId: auth.userId } }, include: { booking: true } });
+      if (!r) throw new NotFoundException('Cash payment not found');
+      const res = await tx.cashReceipt.updateMany({ where: { id: r.id, status: 'PENDING' }, data: { status: 'DISPUTED', disputeReason: reason } });
+      if (!res.count) throw new ConflictException('This cash payment has already been handled.');
+      await this.notifications.notifyVendor(tx, r.booking.vendorId, { type: 'CASH_DISPUTED', title: 'Customer did not confirm cash', body: `The customer reported a problem with ${formatPKR(Number(r.amount))} on ${r.booking.code}: ${reason}`, link: `/vendor/bookings/${r.bookingId}` });
+      await this.notifications.notifyAdmins(tx, 'bookings.manage', { type: 'CASH_DISPUTED', title: 'Disputed cash payment', body: `${r.booking.code}: ${reason}`, link: `/admin/bookings/${r.bookingId}` });
+      return { ok: true };
+    });
+  }
+
+  async resolveCash(auth: AuthCtx, receiptId: string, action: 'CONFIRM' | 'REJECT', reason: string) {
+    if (action === 'CONFIRM') {
+      const res = await this.confirmCash(receiptId, { type: 'ADMIN', id: auth.userId });
+      await this.audit.record({ actorId: auth.userId, action: 'cash.confirmed', entity: 'CashReceipt', entityId: receiptId, reason });
+      return res;
+    }
+    return this.prisma.$transaction(async (tx) => {
+      const res = await tx.cashReceipt.updateMany({ where: { id: receiptId, status: { in: ['PENDING', 'DISPUTED'] } }, data: { status: 'REJECTED', decidedById: auth.userId, decidedAt: new Date(), disputeReason: reason } });
+      if (!res.count) throw new ConflictException('This cash payment has already been handled.');
+      const r = await tx.cashReceipt.findUniqueOrThrow({ where: { id: receiptId }, include: { booking: true } });
+      await this.audit.record({ actorId: auth.userId, action: 'cash.rejected', entity: 'CashReceipt', entityId: receiptId, reason }, tx);
+      await this.notifications.notifyVendor(tx, r.booking.vendorId, { type: 'CASH_REJECTED', title: 'Cash payment not accepted', body: `${r.booking.code}: ${reason}`, link: `/vendor/bookings/${r.bookingId}` });
+      await this.notifications.notify(tx, { userId: r.booking.customerId, type: 'CASH_REJECTED', title: 'Cash payment reviewed', body: `${r.booking.code}: ${reason}`, link: `/account/bookings/${r.bookingId}` });
+      return { ok: true };
+    });
+  }
+
+  // ---- Vendor paying commission ---------------------------------------------
+
+  async startCommissionPayment(auth: AuthCtx, amount?: number) {
+    const vendorId = auth.vendor!.id;
+    const { totals } = await this.commission.statement(vendorId);
+    const value = amount ?? totals.outstanding;
+    if (value <= 0 || value > totals.outstanding) throw new BadRequestException({ message: 'Enter an amount up to what you owe.', code: 'BAD_AMOUNT' });
+    const open = await this.prisma.commissionPayment.findFirst({ where: { vendorId, status: 'INITIATED', amount: value, checkoutUrl: { not: null }, createdAt: { gt: new Date(Date.now() - 30 * 60_000) } } });
+    if (open) return { id: open.id, checkoutUrl: open.checkoutUrl };
+    const cp = await this.prisma.$transaction(async (tx) => tx.commissionPayment.create({ data: { code: await this.prisma.nextCode(tx, 'CM'), vendorId, amount: value, provider: this.provider.name, requestedById: auth.userId, idempotencyKey: `cm:${vendorId}:${Date.now()}` } }));
+    try {
+      const checkout = await this.provider.createCheckout({ paymentCode: cp.code, amount: value, description: `Mehfil commission ${cp.code}`, returnUrl: `${env.WEB_URL}/vendor/commission` });
+      await this.prisma.commissionPayment.update({ where: { id: cp.id }, data: { providerRef: checkout.providerRef, checkoutUrl: checkout.checkoutUrl } });
+      return { id: cp.id, checkoutUrl: checkout.checkoutUrl };
+    } catch (e) {
+      await this.prisma.commissionPayment.update({ where: { id: cp.id }, data: { status: 'FAILED' } });
+      throw e;
+    }
+  }
+
+  private async applyCommissionPayment(tx: Tx, id: string, evt: WebhookEventData, eventRowId: string) {
+    await tx.$queryRaw`SELECT 1 FROM "CommissionPayment" WHERE "id" = ${id} FOR UPDATE`;
+    const claimedEvent = await tx.webhookEvent.updateMany({ where: { id: eventRowId, processedAt: null }, data: { processedAt: new Date() } });
+    if (!claimedEvent.count) return { ok: true, duplicate: true };
+    const cp = await tx.commissionPayment.findUniqueOrThrow({ where: { id } });
+    if (cp.status !== 'INITIATED') return { ok: true, duplicate: true };
+    if (evt.status === 'FAILED') { await tx.commissionPayment.update({ where: { id }, data: { status: 'FAILED', checkoutUrl: null } }); return { ok: true }; }
+    if (evt.amount !== Number(cp.amount)) {
+      await tx.commissionPayment.update({ where: { id }, data: { status: 'RECONCILIATION_REQUIRED' } });
+      await this.notifications.notifyAdmins(tx, 'finance.manage', { type: 'PAYMENT_RECONCILE', title: 'Commission payment needs reconciliation', body: `${cp.code}: amount mismatch`, link: '/admin/commissions' });
+      return { ok: true, reconcile: true };
+    }
+    await tx.commissionPayment.update({ where: { id }, data: { status: 'SUCCEEDED', succeededAt: new Date(), checkoutUrl: null } });
+    await tx.ledgerEntry.create({ data: { type: 'COMMISSION_RECEIVED', amount: cp.amount, vendorId: cp.vendorId, memo: cp.code } });
+    await this.notifications.notifyVendor(tx, cp.vendorId, { type: 'COMMISSION_PAID', title: 'Commission payment received', body: `Thank you. ${formatPKR(Number(cp.amount))} has been applied to your Mehfil commission.`, link: '/vendor/commission' });
+    return { ok: true };
   }
 
   // ---- Refunds -------------------------------------------------------------
@@ -203,7 +373,8 @@ export class PaymentsService {
     const current = await this.prisma.refund.findUniqueOrThrow({ where: { id }, include: { payment: true } });
     if (current.status !== 'APPROVED') throw new ConflictException('This refund has already been processed.');
     let providerRef: string | undefined;
-    if (current.payment.provider !== 'manual') providerRef = (await this.provider.refund({ providerRef: current.payment.providerRef!, amount: Number(current.amount), reason: current.reason, idempotencyKey: current.id })).providerRef;
+    // Money the vendor collected (cash or direct transfer) is returned by the vendor, never through the gateway.
+    if (current.payment.collectedBy === 'PLATFORM') providerRef = (await this.provider.refund({ providerRef: current.payment.providerRef!, amount: Number(current.amount), reason: current.reason, idempotencyKey: current.id })).providerRef;
     await this.prisma.$transaction(async (tx) => {
       await this.prisma.lockBooking(tx, current.payment.bookingId);
       const claimed = await tx.refund.updateMany({ where: { id, status: 'APPROVED' }, data: { status: 'PROCESSED', processedAt: new Date(), providerRef } });
@@ -262,7 +433,7 @@ export class PaymentsService {
     return {
       customerPayments: received, refunds: refunded, commission: commission - reversed, net: received - refunded - (commission - reversed),
       pending: bucket('NOT_DUE') + bucket('ON_HOLD'), onHold: bucket('ON_HOLD'), due, clawback, availableForPayout: Math.max(due - clawback, 0), inProcess: bucket('PROCESSING'), paidOut: Number(paid._sum.amount ?? 0),
-      commissionOwed: Number(direct._sum.commission ?? 0) - Number(direct._sum.commissionReversed ?? 0) - commissionReceived,
+      commissionOwed: (await this.commission.statement(vendorId)).totals.outstanding,
     };
   }
 

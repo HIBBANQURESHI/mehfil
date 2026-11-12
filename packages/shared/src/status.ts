@@ -23,14 +23,15 @@ const OVERRIDES: Record<string, string> = {
   NOT_DUE: 'Not due yet',
   DUE: 'Ready for payout',
   QUOTATION_SENT: 'Quote sent',
+  COMMISSION_DUE: 'Due',
 };
 export const statusLabel = (s: string) => OVERRIDES[s] ?? titleCase(s);
 
 export type StatusTone = 'good' | 'warn' | 'bad' | 'neutral' | 'info';
 const GOOD = ['ACTIVE', 'APPROVED', 'PUBLISHED', 'ACCEPTED', 'CONFIRMED', 'COMPLETED', 'SUCCEEDED', 'PAID', 'RESOLVED', 'PROCESSED'];
-const BAD = ['BLOCKED', 'REJECTED', 'DECLINED', 'CANCELLED', 'FAILED', 'DISPUTED', 'SUSPENDED', 'DELETED', 'WITHDRAWN', 'REFUNDED'];
+const BAD = ['BLOCKED', 'REJECTED', 'DECLINED', 'CANCELLED', 'FAILED', 'DISPUTED', 'SUSPENDED', 'DELETED', 'WITHDRAWN', 'REFUNDED', 'OVERDUE'];
 const WARN = ['PENDING_VENDOR_CONFIRMATION', 'AWAITING_PAYMENT', 'SUBMITTED', 'UNDER_REVIEW', 'CHANGES_REQUIRED', 'PENDING_REVIEW', 'CANCELLATION_REQUESTED', 'RECONCILIATION_REQUIRED', 'REQUESTED', 'ON_HOLD', 'PARTIALLY_REFUNDED', 'OPEN', 'NEW', 'PENDING'];
-const INFO = ['SENT', 'VIEWED', 'RESPONDED', 'QUOTATION_SENT', 'IN_PROGRESS', 'SERVICE_COMPLETED', 'DUE', 'PROCESSING', 'INITIATED'];
+const INFO = ['SENT', 'VIEWED', 'RESPONDED', 'QUOTATION_SENT', 'IN_PROGRESS', 'SERVICE_COMPLETED', 'DUE', 'PROCESSING', 'INITIATED', 'COMMISSION_DUE'];
 export function statusTone(s: string): StatusTone {
   if (GOOD.includes(s)) return 'good';
   if (BAD.includes(s)) return 'bad';
@@ -69,7 +70,7 @@ export const VENDOR_ROLE_AREAS: Record<VendorRole, VendorArea[]> = {
 
 export const Slot = ['LUNCH', 'DINNER', 'FULL_DAY'] as const;
 export type Slot = (typeof Slot)[number];
-export const EventType = ['DHOLKI', 'MEHNDI', 'NIKAH', 'BARAAT', 'WALIMA', 'ENGAGEMENT', 'OTHER'] as const;
+export const EventType = ['DHOLKI', 'MAYUN', 'MEHNDI', 'NIKAH', 'BARAAT', 'WALIMA', 'ENGAGEMENT', 'OTHER'] as const;
 export type EventType = (typeof EventType)[number];
 export const DocumentType = ['CNIC_FRONT', 'CNIC_BACK', 'BUSINESS_REGISTRATION', 'OWNERSHIP_PROOF', 'NTN_CERTIFICATE', 'OTHER'] as const;
 export type DocumentType = (typeof DocumentType)[number];

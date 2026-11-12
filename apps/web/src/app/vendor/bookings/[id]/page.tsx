@@ -1,6 +1,7 @@
 'use client';
 import { formatBps, formatPKR } from '@mehfil/shared';
 import { useParams } from 'next/navigation';
+import { VendorCash } from '@/components/cash';
 import { MilestoneTable, QuoteBreakdown, Timeline } from '@/components/shared-pages';
 import { Button, Card, ErrorBox, PageHeader, ReasonAction, Spinner, Stat, Status, useToast } from '@/components/ui';
 import { api, useApi } from '@/lib/api';
@@ -23,6 +24,7 @@ export default function Page() {
       <div className="mt-5 grid gap-5 lg:grid-cols-[1fr_320px]">
         <div className="space-y-5"><Card title="Payment schedule"><MilestoneTable milestones={b.milestones} /></Card><Card title="Agreed services"><QuoteBreakdown q={b.quotation} /></Card></div>
         <aside className="space-y-5">
+          <VendorCash b={b} mutate={() => mutate()} />
           <Card title="Customer"><p className="text-sm">{b.customer.name}</p><p className="tnum text-sm text-muted">{b.customer.phone}</p>{b.customer.email && <p className="text-sm text-muted">{b.customer.email}</p>}{!b.confirmedAt && <p className="mt-2 text-xs text-muted">Full contact details unlock when the booking is confirmed.</p>}</Card>
           <Card title="Actions"><div className="space-y-2">{['CONFIRMED', 'IN_PROGRESS'].includes(b.status) && <Button className="w-full" onClick={() => act('complete')}>Mark service completed</Button>}{canCancel && <ReasonAction label="Cancel booking" variant="danger" title="Cancel this booking?" placeholder="Why are you cancelling?" onSubmit={async (reason) => { await api(`/vendor/bookings/${id}/cancel`, { body: { reason } }); mutate(); }}><p className="mb-3 rounded-lg bg-bad/8 p-3 text-sm text-bad">If you cancel, everything the customer has paid is refunded in full.</p></ReasonAction>}</div></Card>
           <Card title="Timeline"><Timeline events={b.timeline} /></Card>

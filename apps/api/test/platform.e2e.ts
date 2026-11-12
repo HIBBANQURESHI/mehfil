@@ -522,7 +522,8 @@ describe('cancellations and refunds', () => {
 
 describe('full journey to payout', () => {
   it('runs from completed event to verified review and vendor payout, with exact figures', async () => {
-    const id = await acceptedBooking(futureDate(1), 50000000);
+    // Two days out: one day in UTC can already be today in Karachi after midnight there.
+    const id = await acceptedBooking(futureDate(2), 50000000);
     await h.api('post', `/vendor/bookings/${id}/confirm`, v.token).expect(200);
     let b = (await h.api('get', `/bookings/${id}`, c.token).expect(200)).body;
     for (const m of b.milestones) await h.pay(c.token, id, m.id);
@@ -780,5 +781,457 @@ describe('security regressions', () => {
     expect(sent).toHaveLength(1);
     expect(sent[0][2]).toBe('Walaikum salam');
     expect(sent[0][3]).toBe(`/account/messages/${conv.id}`);
+  });
+});
+
+describe('plan my wedding', () => {
+  const { sanitizeAiPlan, WeddingPersonalizer, GeminiClient } = require('../src/weddings/planner-ai');
+  const plan = (token: string, body: object) => h.api('post', '/weddings/plan', token).send(body);
+  const waitFor = async (fn: () => Promise<boolean>) => { for (let i = 0; i < 50; i++) { if (await fn()) return; await new Promise((r) => setTimeout(r, 100)); } throw new Error('timed out'); };
+
+  it('builds a full workspace from the wizard answers', async () => {
+    const u = await h.customer('Planner');
+    const { body: w } = await plan(u.token, {
+      partnerOne: 'Ali', partnerTwo: 'Ayesha', cityId: refs.city.id, guestCount: 500, planningStatus: 'JUST_STARTED', targetMonth: futureDate(400).slice(0, 7),
+      events: [{ type: 'MEHNDI', date: futureDate(398), guestCount: 250 }, { type: 'BARAAT', date: futureDate(400) }],
+      budgetBand: '20_40L', services: ['venue', 'catering', 'decoration', 'photography'], style: 'ELEGANT', venuePreference: 'BANQUET_HALL',
+    }).expect(201);
+    expect(w.title).toBe('Ali & Ayesha');
+    expect(w.events.map((e: any) => [e.name, e.guestCount, e.cityId])).toEqual([['Mehndi', 250, refs.city.id], ['Baraat', 500, refs.city.id]]);
+    expect(w.summary.budget).toBe(300_000_000);
+    expect(w.budgetItems.map((b: any) => b.serviceKey).sort()).toEqual(['catering', 'decoration', 'photography', 'venue']);
+    expect(Math.abs(w.budgetItems.reduce((s: number, b: any) => s + b.planned, 0) - 300_000_000)).toBeLessThan(4);
+    expect(w.checklist.length).toBeGreaterThan(5);
+    expect(w.checklist.every((c: any) => c.source === 'AUTO')).toBe(true);
+    expect(w.checklist.every((c: any) => !c.dueDate || c.dueDate.slice(0, 10) >= futureDate(0))).toBe(true);
+    expect(w.progress).toMatchObject({ percent: 0, stage: 'Getting started', servicesNeeded: 4 });
+    expect(Object.values(w.eventStatus)).toEqual(['NOT_PLANNED', 'NOT_PLANNED']);
+    expect(w.aiStatus).toBe('NONE');
+    expect(w.aiAllocation).toBeUndefined();
+  });
+
+  it('accepts a rough draft with almost nothing filled in', async () => {
+    const u = await h.customer('Drafter');
+    const { body } = await plan(u.token, {}).expect(201);
+    expect(body.title).toBe('Our wedding');
+    expect(body.summary.budget).toBeNull();
+  });
+
+  it('rejects dates in the past and a custom budget with no amount', async () => {
+    const u = await h.customer('Late');
+    await plan(u.token, { weddingDate: '2020-01-01' }).expect(400);
+    await plan(u.token, { budgetBand: 'CUSTOM' }).expect(400);
+  });
+
+  it('recommends real listings that fit the city, guests, budget and date', async () => {
+    const u = await h.customer('Recs');
+    const make = async (body: object) => (await plan(u.token, { cityId: refs.city.id, services: ['venue'], ...body }).expect(201)).body.id as string;
+    const recs = async (id: string) => (await h.api('get', `/weddings/${id}/recommendations`, u.token).expect(200)).body;
+    const has = (r: any) => r.groups[0].listings.some((l: any) => l.id === v.listingId);
+    // Other tests add similar halls; a clear rating lead keeps this one in the top picks so the filters are what's tested.
+    await h.prisma.listing.update({ where: { id: v.listingId }, data: { avgRating: 5, reviewCount: 40 } });
+
+    const fits = await recs(await make({ guestCount: 400, budgetBand: 'CUSTOM', budget: 2_000_000_000 }));
+    expect(has(fits)).toBe(true);
+    expect(fits.groups[0]).toMatchObject({ service: 'venue', explore: { category: 'banquet-halls', city: 'karachi', guests: 400 } });
+    expect(has(await recs(await make({ guestCount: 400, budgetBand: 'CUSTOM', budget: 1_000_000 })))).toBe(false);
+    expect(has(await recs(await make({ guestCount: 99999 })))).toBe(false);
+
+    const date = futureDate(300);
+    await h.api('post', `/vendor/listings/${v.listingId}/block`, v.token).send({ dates: [date] }).expect(200);
+    const blocked = await recs(await make({ events: [{ type: 'BARAAT', date }] }));
+    expect(blocked.dateChecked).toBe(date);
+    expect(has(blocked)).toBe(false);
+  });
+
+  it('keeps every plan private to its owner', async () => {
+    const u = await h.customer('Owner');
+    const { body: w } = await plan(u.token, { services: ['venue'] }).expect(201);
+    const other = await h.customer('Snoop');
+    await h.api('get', `/weddings/${w.id}`, other.token).expect(404);
+    await h.api('get', `/weddings/${w.id}/recommendations`, other.token).expect(404);
+    await h.api('post', `/weddings/${w.id}/budget/apply-suggestion`, other.token).expect(404);
+    await h.api('patch', `/weddings/${w.id}/budget/${w.budgetItems[0].id}`, other.token).send({ planned: 1 }).expect(404);
+  });
+
+  it('filters anything unsafe or malformed out of the AI answer', () => {
+    const ctx = { services: ['venue', 'catering'], today: '2027-01-01', latestDate: '2027-12-31', existingTasks: ['Send invitations'] };
+    const out = sanitizeAiPlan({
+      welcome: 'Your Karachi Baraat is going to be beautiful. Here is a plan to get you there.',
+      allocation: [{ service: 'venue', percent: 40 }, { service: 'catering', percent: 58 }, { service: 'hacked', percent: 2 }],
+      checklist: [
+        { title: 'Visit three venues', dueDate: '2027-03-01' }, { title: 'send invitations', dueDate: '' },
+        { title: 'Book Royal Hall, available now', dueDate: '2027-02-01' }, { title: 'Read the guide at https://evil.example', dueDate: '' },
+        { title: 'Taste menus', dueDate: '2026-05-01' }, { title: 'Confirm caterer', dueDate: 'not a date' },
+      ],
+    }, ctx)!;
+    expect(out.welcome).toContain('Karachi');
+    expect(out.allocation).toEqual([{ service: 'venue', bps: 4082 }, { service: 'catering', bps: 5918 }]);
+    expect(out.checklist).toEqual([
+      { title: 'Visit three venues', dueDate: '2027-03-01' }, { title: 'Read the guide at', dueDate: null },
+      { title: 'Taste menus', dueDate: null }, { title: 'Confirm caterer', dueDate: null },
+    ]);
+    expect(sanitizeAiPlan({ welcome: 'Venue X is available for Rs. 300000 on your date.' }, ctx)).toBeNull();
+    expect(sanitizeAiPlan('not json', ctx)).toBeNull();
+    expect(sanitizeAiPlan({ allocation: [{ service: 'venue', percent: 10 }, { service: 'catering', percent: 10 }] }, ctx)).toBeNull();
+  });
+
+  it('personalises in the background and lets the customer apply the suggested split', async () => {
+    const gemini = h.app.get(GeminiClient);
+    Object.defineProperty(gemini, 'enabled', { get: () => true, configurable: true });
+    const original = gemini.plan;
+    let calls = 0;
+    gemini.plan = async (ctx: any) => {
+      calls++;
+      expect(JSON.stringify(ctx)).not.toContain('Zara');
+      return { welcome: 'Your Mehndi and Baraat in Karachi are taking shape beautifully.', allocation: [{ service: 'venue', percent: 45 }, { service: 'catering', percent: 55 }], checklist: [{ title: 'Pick a colour palette for the Mehndi', dueDate: '' }] };
+    };
+    try {
+      const u = await h.customer('AI Couple');
+      const { body: w } = await plan(u.token, { partnerOne: 'Zara', cityId: refs.city.id, budgetBand: 'CUSTOM', budget: 100_000_000, services: ['venue', 'catering'], events: [{ type: 'MEHNDI' }, { type: 'BARAAT' }] }).expect(201);
+      expect(w.aiStatus).toBe('PENDING');
+      await waitFor(async () => (await h.prisma.wedding.findUniqueOrThrow({ where: { id: w.id } })).aiStatus === 'READY');
+      await h.app.get(WeddingPersonalizer).personalize(w.id);
+      expect(calls).toBe(1);
+      const { body: d } = await h.api('get', `/weddings/${w.id}`, u.token).expect(200);
+      expect(d.aiNote).toContain('Karachi');
+      expect(d.checklist.filter((c: any) => c.source === 'AI').map((c: any) => c.title)).toEqual(['Pick a colour palette for the Mehndi']);
+      expect(d.suggestion.map((s: any) => [s.service, s.amount])).toEqual([['venue', 45_000_000], ['catering', 55_000_000]]);
+      const { body: applied } = await h.api('post', `/weddings/${w.id}/budget/apply-suggestion`, u.token).expect(200);
+      expect(applied.budgetItems.map((b: any) => [b.serviceKey, b.planned]).sort()).toEqual([['catering', 55_000_000], ['venue', 45_000_000]]);
+    } finally {
+      gemini.plan = original;
+      delete (gemini as any).enabled;
+    }
+  });
+
+  it('retries when Gemini is busy, then gives up without breaking the plan', async () => {
+    const gemini = h.app.get(GeminiClient);
+    const personalizer = h.app.get(WeddingPersonalizer);
+    Object.defineProperty(gemini, 'enabled', { get: () => true, configurable: true });
+    const original = gemini.plan;
+    gemini.plan = async () => { throw new Error('Gemini returned 503'); };
+    try {
+      const u = await h.customer('Busy');
+      const { body: w } = await plan(u.token, { services: ['venue'] }).expect(201);
+      // The attempt counter moves when the work is claimed; the failure is handled once the lock drops to the 2-minute backoff.
+      await waitFor(async () => { const r = await h.prisma.wedding.findUniqueOrThrow({ where: { id: w.id } }); return r.aiAttempts === 1 && !!r.aiLockedUntil && r.aiLockedUntil.getTime() < Date.now() + 150_000; });
+      let row = await h.prisma.wedding.findUniqueOrThrow({ where: { id: w.id } });
+      expect(row.aiStatus).toBe('PENDING');
+      expect(row.aiLockedUntil!.getTime()).toBeGreaterThan(Date.now());
+      for (let i = 0; i < 2; i++) {
+        await h.prisma.wedding.update({ where: { id: w.id }, data: { aiLockedUntil: new Date(0) } });
+        await personalizer.runDue();
+      }
+      row = await h.prisma.wedding.findUniqueOrThrow({ where: { id: w.id } });
+      expect(row).toMatchObject({ aiStatus: 'FAILED', aiAttempts: 3 });
+      await h.api('get', `/weddings/${w.id}`, u.token).expect(200);
+    } finally {
+      gemini.plan = original;
+      delete (gemini as any).enabled;
+    }
+  });
+});
+
+describe('cash payments and vendor commission', () => {
+  // Hall commission is 5%. The default quote is Rs 375,000 with a 30% advance of Rs 112,500, so Rs 5,625 commission.
+  const ADVANCE = 11250000;
+  const COMMISSION = applyBps(ADVANCE, 500);
+
+  async function cashBooking(day: number, name: string) {
+    const vendor = await h.vendor(admin.token, refs, refs.hall, { name });
+    const id = await acceptedBooking(futureDate(day), undefined, c.token, vendor);
+    await h.api('post', `/vendor/bookings/${id}/confirm`, vendor.token).expect(200);
+    const b = (await h.api('get', `/bookings/${id}`, c.token).expect(200)).body;
+    return { vendor, id, milestoneId: b.milestones[0].id as string };
+  }
+  const record = (vendor: { token: string }, id: string, milestoneId: string) =>
+    h.api('post', `/vendor/bookings/${id}/cash`, vendor.token).send({ milestoneId, receivedOn: new Date().toISOString().slice(0, 10), note: 'Paid at the office' });
+
+  it('confirms a booking only once the customer confirms the cash, and makes the commission owed', async () => {
+    const { vendor, id, milestoneId } = await cashBooking(300, 'Cash Hall One');
+    await h.api('post', `/bookings/${id}/milestones/${milestoneId}/method`, c.token).send({ method: 'CASH' }).expect(200);
+    const { body: receipt } = await record(vendor, id, milestoneId).expect(201);
+    expect(receipt.amount).toBe(ADVANCE);
+    expect((await h.prisma.booking.findUniqueOrThrow({ where: { id } })).status).toBe('AWAITING_PAYMENT');
+
+    const stranger = await h.customer('Stranger');
+    await h.api('post', `/bookings/${id}/cash/${receipt.id}/confirm`, stranger.token).expect(404);
+    await h.api('post', `/bookings/${id}/cash/${receipt.id}/confirm`, vendor.token).expect(404);
+
+    await h.api('post', `/bookings/${id}/cash/${receipt.id}/confirm`, c.token).expect(200);
+    await h.api('post', `/bookings/${id}/cash/${receipt.id}/confirm`, c.token).expect(409);
+    expect((await h.prisma.booking.findUniqueOrThrow({ where: { id } })).status).toBe('CONFIRMED');
+    const payment = await h.prisma.payment.findFirstOrThrow({ where: { bookingId: id } });
+    expect([payment.collectedBy, payment.provider, Number(payment.commission)]).toEqual(['VENDOR', 'cash', COMMISSION]);
+    expect(await h.prisma.settlement.count({ where: { bookingId: id } })).toBe(0);
+
+    const { body: st } = await h.api('get', '/vendor/commission', vendor.token).expect(200);
+    expect(st.totals).toMatchObject({ owed: COMMISSION, outstanding: COMMISSION, overdue: 0 });
+    expect(st.restricted).toBe(false);
+    const { body: detail } = await h.api('get', `/bookings/${id}`, c.token).expect(200);
+    expect(detail.cashReceipts[0].status).toBe('CONFIRMED');
+  });
+
+  it('lets only one of several simultaneous cash records through', async () => {
+    const { vendor, id, milestoneId } = await cashBooking(301, 'Cash Hall Two');
+    const results = await Promise.all([1, 2, 3].map(() => record(vendor, id, milestoneId)));
+    expect(results.map((r) => r.status).sort()).toEqual([201, 409, 409]);
+    expect(await h.prisma.cashReceipt.count({ where: { bookingId: id } })).toBe(1);
+  });
+
+  it('can require the advance to be paid online', async () => {
+    const { vendor, id, milestoneId } = await cashBooking(302, 'Cash Hall Three');
+    await h.api('patch', '/admin/settings', admin.token).send({ requireOnlineDeposit: true }).expect(200);
+    try {
+      expect((await h.api('post', `/bookings/${id}/milestones/${milestoneId}/method`, c.token).send({ method: 'CASH' }).expect(409)).body.code).toBe('ONLINE_DEPOSIT_REQUIRED');
+      expect((await record(vendor, id, milestoneId).expect(409)).body.code).toBe('ONLINE_DEPOSIT_REQUIRED');
+    } finally {
+      await h.api('patch', '/admin/settings', admin.token).send({ requireOnlineDeposit: false }).expect(200);
+    }
+  });
+
+  it('sends a disputed receipt to admin, who can reject it without moving the booking', async () => {
+    const { vendor, id, milestoneId } = await cashBooking(303, 'Cash Hall Four');
+    const { body: receipt } = await record(vendor, id, milestoneId).expect(201);
+    await h.api('post', `/bookings/${id}/cash/${receipt.id}/dispute`, c.token).send({ reason: 'I paid only half' }).expect(200);
+    await h.api('post', `/bookings/${id}/cash/${receipt.id}/confirm`, c.token).expect(409);
+    expect((await record(vendor, id, milestoneId)).status).toBe(409);
+    const { body: queue } = await h.api('get', '/admin/cash-receipts', admin.token).expect(200);
+    expect(queue.some((r: any) => r.id === receipt.id && r.status === 'DISPUTED')).toBe(true);
+    await h.api('post', `/admin/cash-receipts/${receipt.id}/resolve`, admin.token).send({ action: 'REJECT', reason: 'Customer showed half was paid' }).expect(200);
+    expect((await h.prisma.cashReceipt.findUniqueOrThrow({ where: { id: receipt.id } })).status).toBe('REJECTED');
+    expect(await h.prisma.payment.count({ where: { bookingId: id } })).toBe(0);
+    expect((await h.prisma.booking.findUniqueOrThrow({ where: { id } })).status).toBe('AWAITING_PAYMENT');
+    expect(await h.prisma.auditLog.count({ where: { entityId: receipt.id, action: 'cash.rejected' } })).toBe(1);
+    await record(vendor, id, milestoneId).expect(201);
+  });
+
+  it('confirms cash automatically after the window, and never releases a date while cash awaits confirmation', async () => {
+    const { vendor, id, milestoneId } = await cashBooking(304, 'Cash Hall Five');
+    const { body: receipt } = await record(vendor, id, milestoneId).expect(201);
+    await h.prisma.booking.update({ where: { id }, data: { holdExpiresAt: new Date(Date.now() - 60_000) } });
+    await h.jobs.runAll();
+    expect((await h.prisma.booking.findUniqueOrThrow({ where: { id } })).status).toBe('AWAITING_PAYMENT');
+    await h.prisma.cashReceipt.update({ where: { id: receipt.id }, data: { createdAt: new Date(Date.now() - 4 * 86_400_000) } });
+    await h.jobs.autoConfirmCash();
+    const r = await h.prisma.cashReceipt.findUniqueOrThrow({ where: { id: receipt.id } });
+    expect([r.status, r.autoConfirmed]).toEqual(['CONFIRMED', true]);
+    expect((await h.prisma.booking.findUniqueOrThrow({ where: { id } })).status).toBe('CONFIRMED');
+  });
+
+  it('pauses new quotations while commission is overdue, and lifts it once the vendor pays online', async () => {
+    const { vendor, id, milestoneId } = await cashBooking(305, 'Cash Hall Six');
+    const { body: receipt } = await record(vendor, id, milestoneId).expect(201);
+    await h.api('post', `/bookings/${id}/cash/${receipt.id}/confirm`, c.token).expect(200);
+    await h.prisma.payment.updateMany({ where: { bookingId: id }, data: { commissionDueAt: new Date(Date.now() - 86_400_000) } });
+
+    const { body: st } = await h.api('get', '/vendor/commission', vendor.token).expect(200);
+    expect(st.totals.overdue).toBe(COMMISSION);
+    expect(st.restricted).toBe(true);
+    await h.jobs.commissionReminders();
+    expect(await h.prisma.payment.count({ where: { bookingId: id, commissionOverdueAt: { not: null } } })).toBe(1);
+
+    const { body: enq } = await h.api('post', '/enquiries', c.token).send({ listingIds: [vendor.listingId], eventDate: futureDate(306), slot: 'FULL_DAY', guestCount: 300, requirements: 'Hall' }).expect(201);
+    const quote = { enquiryId: enq.enquiries[0].id, lines: [{ description: 'Hall', quantity: 1, unitPrice: 20000000 }], cancellationPolicyId: refs.policy.id, milestones: [{ label: 'Full', shareBps: 10000, dueRule: 'ON_BOOKING' }] };
+    expect((await h.api('post', '/vendor/quotations', vendor.token).send({ ...quote, send: true }).expect(403)).body.code).toBe('COMMISSION_OVERDUE');
+    await h.api('post', '/vendor/quotations', vendor.token).send({ ...quote, send: false }).expect(201);
+
+    await h.api('post', '/vendor/commission/pay', vendor.token).send({ amount: COMMISSION + 1 }).expect(400);
+    const { body: checkout } = await h.api('post', '/vendor/commission/pay', vendor.token).send({}).expect(200);
+    expect(checkout.checkoutUrl).toBeTruthy();
+    const cp = await h.prisma.commissionPayment.findUniqueOrThrow({ where: { id: checkout.id } });
+    const evt = { eventId: `cm_${cp.id}`, providerRef: cp.providerRef, status: 'SUCCEEDED', amount: Number(cp.amount) };
+    await Promise.all([1, 2, 3].map(() => h.sendWebhook(evt).expect(200)));
+    await h.sendWebhook({ ...evt, eventId: `cm2_${cp.id}` }).expect(200);
+    expect(await h.prisma.ledgerEntry.count({ where: { vendorId: vendor.vendorId, type: 'COMMISSION_RECEIVED' } })).toBe(1);
+
+    const { body: after } = await h.api('get', '/vendor/commission', vendor.token).expect(200);
+    expect(after.totals).toMatchObject({ outstanding: 0, overdue: 0 });
+    expect(after.restricted).toBe(false);
+    await h.api('post', '/vendor/quotations', vendor.token).send({ ...quote, send: true }).expect(201);
+  });
+
+  it('reverses the commission when cash is refunded, without calling the gateway', async () => {
+    const { vendor, id, milestoneId } = await cashBooking(307, 'Cash Hall Seven');
+    const { body: receipt } = await record(vendor, id, milestoneId).expect(201);
+    const { body: done } = await h.api('post', `/bookings/${id}/cash/${receipt.id}/confirm`, c.token).expect(200);
+    const svc: any = h.app.get(require('../src/payments/payments.service').PaymentsService);
+    const spy = jest.spyOn(svc.provider, 'refund');
+    const { body: refund } = await h.api('post', '/refunds', c.token).send({ paymentId: done.paymentId, reason: 'Vendor returned the cash' }).expect(201);
+    await h.api('post', `/admin/refunds/${refund.id}/decision`, admin.token).send({ approve: true, reason: 'Vendor confirmed return' }).expect(200);
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+    expect((await h.api('get', '/vendor/commission', vendor.token).expect(200)).body.totals.outstanding).toBe(0);
+  });
+
+  it('lists vendors by overdue commission for admins only', async () => {
+    const { body } = await h.api('get', '/admin/commission-statements', admin.token).expect(200);
+    expect(body.length).toBeGreaterThan(0);
+    await h.api('get', '/admin/commission-statements', c.token).expect(403);
+  });
+});
+
+describe('plan results', () => {
+  const plan = (token: string, body: object) => h.api('post', '/weddings/plan', token).send(body);
+
+  it('shows the best real vendors per service with honest reasons, and tracks quote requests', async () => {
+    const u = await h.customer('Results');
+    const { body: w } = await plan(u.token, { cityId: refs.city.id, guestCount: 400, events: [{ type: 'BARAAT', date: futureDate(410) }], budgetBand: '20_40L', services: ['venue', 'photography'] }).expect(201);
+    const { body: r } = await h.api('get', `/weddings/${w.id}/results`, u.token).expect(200);
+    expect(r.events).toHaveLength(1);
+    expect(r.budgetSplit.map((b: any) => b.service).sort()).toEqual(['photography', 'venue']);
+    const venue = r.services.find((s: any) => s.service === 'venue');
+    expect(venue.picks.length).toBeGreaterThan(0);
+    expect(venue.picks.length).toBeLessThanOrEqual(3);
+    expect(venue.overBudget).toBe(false);
+    expect(venue.progress).toBe('OPEN');
+    const pick = venue.picks[0];
+    expect(pick.estimate).toBeLessThanOrEqual(venue.allocation);
+    expect(pick.reasons.some((x: string) => x.startsWith('Within your'))).toBe(true);
+    expect(pick.reasons.some((x: string) => x.startsWith('Not booked on Mehfil for'))).toBe(true);
+    expect(pick.reasons.join(' ')).not.toMatch(/available/i);
+    expect(r.nextSteps.length).toBeLessThanOrEqual(5);
+
+    await h.api('post', '/enquiries', u.token).send({ listingIds: venue.picks.map((p: any) => p.id), weddingId: w.id, eventId: r.events[0].id, eventDate: r.events[0].date, guestCount: 400, requirements: 'Hall for our baraat' }).expect(201);
+    const { body: after } = await h.api('get', `/weddings/${w.id}/results`, u.token).expect(200);
+    expect(after.services.find((s: any) => s.service === 'venue').progress).toBe('QUOTES_REQUESTED');
+
+    const other = await h.customer('Nosy');
+    await h.api('get', `/weddings/${w.id}/results`, other.token).expect(404);
+  });
+
+  it('still shows options, clearly marked, when nothing fits the budget', async () => {
+    const u = await h.customer('Tight');
+    const { body: w } = await plan(u.token, { cityId: refs.city.id, guestCount: 100, budgetBand: 'CUSTOM', budget: 1_000_000, services: ['venue'] }).expect(201);
+    const { body: r } = await h.api('get', `/weddings/${w.id}/results`, u.token).expect(200);
+    const venue = r.services[0];
+    expect(venue.overBudget).toBe(true);
+    expect(venue.matches).toBe(0);
+    expect(venue.picks[0].reasons[0]).toMatch(/^From .* above your/);
+  });
+});
+
+describe('safepay', () => {
+  const { SafepayProvider } = require('../src/payments/safepay');
+  const { PaymentsService } = require('../src/payments/payments.service');
+  const crypto = require('crypto');
+  const KEY = process.env.SAFEPAY_API_KEY!;
+  const sign = (s: string) => crypto.createHmac('sha512', process.env.SAFEPAY_WEBHOOK_SECRET!).update(s).digest('hex');
+  const json = (status: number, body: unknown) => ({ ok: status < 400, status, text: async () => JSON.stringify(body) }) as unknown as Response;
+
+  /** Stands in for Safepay's API: records calls and answers like the real sandbox did. */
+  function fakeSafepay(state: { tracker: string; trackerState: string; amount: number }) {
+    const calls: { method: string; url: string; headers: any; body: any }[] = [];
+    const spy = jest.spyOn(global, 'fetch').mockImplementation(async (url: any, init: any = {}) => {
+      const u = String(url);
+      calls.push({ method: init.method ?? 'GET', url: u, headers: init.headers, body: init.body ? JSON.parse(init.body) : null });
+      if (u.endsWith('/order/payments/v3/')) return json(201, { data: { tracker: { token: state.tracker, state: 'TRACKER_STARTED' } }, status: { errors: [], message: 'success' } });
+      if (u.endsWith('/client/passport/v1/token')) return json(200, { data: 'tbt-token==' });
+      if (u.includes('/reporter/api/v1/payments/')) return json(200, { ok: true, data: { token: state.tracker, state: state.trackerState, client: { api_key: KEY }, purchase_totals: { quote_amount: { currency: 'PKR', amount: state.amount } } } });
+      if (u.includes('/refund')) return json(200, { data: { tracker: { token: state.tracker, state: 'TRACKER_REFUNDED' } } });
+      return json(404, {});
+    });
+    return { calls, restore: () => spy.mockRestore() };
+  }
+
+  /** Runs a test with Safepay as the live provider, then puts the sandbox back. */
+  async function withSafepay(fn: (svc: any) => Promise<void>) {
+    const svc = h.app.get(PaymentsService);
+    const original = svc.provider;
+    const cfg = require('../src/common/config').env;
+    const before = cfg.PAYMENT_PROVIDER;
+    svc.provider = h.app.get(SafepayProvider);
+    cfg.PAYMENT_PROVIDER = 'safepay';
+    try { await fn(svc); } finally { svc.provider = original; cfg.PAYMENT_PROVIDER = before; }
+  }
+
+  it('accepts only webhooks signed with the shared secret, and maps the events Mehfil uses', () => {
+    const p = h.app.get(SafepayProvider);
+    const evt = { token: 'evt_1', version: '2.0.0', merchant_api_key: KEY, type: 'payment.succeeded', data: { tracker: 'track_abc', state: 'TRACKER_ENDED', amount: 45000, fee: 1475 } };
+    const raw = JSON.stringify(evt);
+    expect(p.parseWebhook(Buffer.from(raw), { 'x-sfpy-signature': sign(raw) })).toEqual({ eventId: 'evt_1', providerRef: 'track_abc', status: 'SUCCEEDED', amount: 45000, fee: 1475 });
+    expect(() => p.parseWebhook(Buffer.from(raw), { 'x-sfpy-signature': 'a'.repeat(128) })).toThrow();
+    expect(() => p.parseWebhook(Buffer.from(raw), {})).toThrow();
+    const other = JSON.stringify({ ...evt, merchant_api_key: 'sec_someone_else' });
+    expect(() => p.parseWebhook(Buffer.from(other), { 'x-sfpy-signature': sign(other) })).toThrow();
+    const refunded = JSON.stringify({ ...evt, type: 'payment.refunded' });
+    expect(p.parseWebhook(Buffer.from(refunded), { 'x-sfpy-signature': sign(refunded) })).toBeNull();
+    const failed = JSON.stringify({ ...evt, type: 'payment.failed', data: { tracker: 'track_abc', message: 'Card declined' } });
+    expect(p.parseWebhook(Buffer.from(failed), { 'x-sfpy-signature': sign(failed) })).toMatchObject({ status: 'FAILED', failureReason: 'Card declined' });
+  });
+
+  it('starts a hosted checkout in paisa, and confirms only after asking Safepay directly', async () => {
+    const id = await acceptedBooking(futureDate(420));
+    await h.api('post', `/vendor/bookings/${id}/confirm`, v.token).expect(200);
+    const b = (await h.api('get', `/bookings/${id}`, c.token).expect(200)).body;
+    const m = b.milestones[0];
+    const state = { tracker: 'track_11111111-2222-3333-4444-555555555555', trackerState: 'TRACKER_STARTED', amount: m.amount };
+    const fake = fakeSafepay(state);
+    try {
+      await withSafepay(async () => {
+        const { body: start } = await h.api('post', `/bookings/${id}/pay`, c.token).send({ milestoneId: m.id }).expect(200);
+        const url = new URL(start.checkoutUrl);
+        expect(url.origin + url.pathname).toBe('https://sandbox.api.getsafepay.com/embedded/');
+        expect(url.searchParams.get('tracker')).toBe(state.tracker);
+        expect(url.searchParams.get('tbt')).toBe('tbt-token==');
+        expect(url.searchParams.get('redirect_url')).toContain('/v1/payments/safepay/return?to=');
+        const created = fake.calls.find((x) => x.url.endsWith('/order/payments/v3/'))!;
+        expect(created.body).toMatchObject({ merchant_api_key: KEY, currency: 'PKR', amount: m.amount });
+        expect(created.headers['X-SFPY-MERCHANT-SECRET']).toBe(process.env.SAFEPAY_SECRET_KEY);
+
+        // Coming back before Safepay has finished must not confirm anything.
+        const early = await h.api('get', `/payments/safepay/return?tracker=${state.tracker}&to=${encodeURIComponent(`http://localhost:3000/account/bookings/${id}`)}`);
+        expect(early.status).toBe(303);
+        expect(early.headers.location).toBe(`http://localhost:3000/account/bookings/${id}?payment=pending`);
+        expect((await h.prisma.booking.findUniqueOrThrow({ where: { id } })).status).toBe('AWAITING_PAYMENT');
+
+        state.trackerState = 'TRACKER_ENDED';
+        const back = await h.api('get', `/payments/safepay/return?tracker=${state.tracker}&to=${encodeURIComponent(`http://localhost:3000/account/bookings/${id}`)}`);
+        expect(back.headers.location).toBe(`http://localhost:3000/account/bookings/${id}?payment=success`);
+        expect((await h.prisma.booking.findUniqueOrThrow({ where: { id } })).status).toBe('CONFIRMED');
+
+        // The real webhook arriving afterwards changes nothing.
+        const raw = JSON.stringify({ token: 'evt_late', merchant_api_key: KEY, type: 'payment.succeeded', data: { tracker: state.tracker, state: 'TRACKER_ENDED', amount: m.amount } });
+        await h.http().post('/v1/webhooks/payments/safepay').set('Content-Type', 'application/json').set('x-sfpy-signature', sign(raw)).send(raw).expect(200);
+        const p = await h.prisma.payment.findFirstOrThrow({ where: { providerRef: state.tracker } });
+        expect(await h.prisma.ledgerEntry.count({ where: { paymentId: p.id, type: 'PAYMENT_RECEIVED' } })).toBe(1);
+
+        // Refunds go back through Safepay with the checkout token.
+        const { body: refund } = await h.api('post', '/refunds', c.token).send({ paymentId: p.id, amount: 1000, reason: 'Testing' }).expect(201);
+        await h.api('post', `/admin/refunds/${refund.id}/decision`, admin.token).send({ approve: true, reason: 'ok' }).expect(200);
+        const r = fake.calls.find((x) => x.url.includes(`/order/payments/v3/${state.tracker}/refund`))!;
+        expect(r.body).toEqual({ currency: 'PKR', amount: 1000 });
+        expect(r.headers.Authorization).toBe('Bearer tbt-token==');
+      });
+    } finally { fake.restore(); }
+  });
+
+  it('never redirects outside the site, and ignores trackers it never issued', async () => {
+    const fake = fakeSafepay({ tracker: 'track_99999999-0000-0000-0000-000000000000', trackerState: 'TRACKER_ENDED', amount: 1 });
+    try {
+      await withSafepay(async () => {
+        const res = await h.api('get', `/payments/safepay/return?tracker=track_99999999-0000-0000-0000-000000000000&to=${encodeURIComponent('https://evil.example/steal')}`);
+        expect(res.headers.location).toBe('http://localhost:3000/?payment=pending');
+        expect(fake.calls.length).toBe(0);
+      });
+    } finally { fake.restore(); }
+  });
+
+  it('finds payments whose webhook never arrived', async () => {
+    const id = await acceptedBooking(futureDate(421));
+    await h.api('post', `/vendor/bookings/${id}/confirm`, v.token).expect(200);
+    const m = (await h.api('get', `/bookings/${id}`, c.token).expect(200)).body.milestones[0];
+    const state = { tracker: 'track_22222222-2222-3333-4444-555555555555', trackerState: 'TRACKER_STARTED', amount: m.amount };
+    const fake = fakeSafepay(state);
+    try {
+      await withSafepay(async (svc) => {
+        await h.api('post', `/bookings/${id}/pay`, c.token).send({ milestoneId: m.id }).expect(200);
+        await h.prisma.payment.updateMany({ where: { providerRef: state.tracker }, data: { createdAt: new Date(Date.now() - 10 * 60_000) } });
+        state.trackerState = 'TRACKER_ENDED';
+        await svc.reconcileOpenCheckouts();
+        expect((await h.prisma.booking.findUniqueOrThrow({ where: { id } })).status).toBe('CONFIRMED');
+      });
+    } finally { fake.restore(); }
   });
 });

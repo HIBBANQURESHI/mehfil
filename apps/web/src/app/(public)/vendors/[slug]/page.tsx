@@ -1,6 +1,7 @@
 import { formatPKR } from '@mehfil/shared';
 import { BadgeCheck, Check, Clock, MapPin, Star, Users } from 'lucide-react';
 import { notFound } from 'next/navigation';
+import { AvailabilityCalendar } from '@/components/availability-calendar';
 import { ListingActions, SaveButton } from '@/components/listing-actions';
 import { publicGet } from '@/lib/server';
 import { fmtDate } from '@/lib/format';
@@ -40,6 +41,7 @@ export default async function ListingPage({ params }: Props) {
             </div>
           </header>
           <section><h2 className="text-2xl">About</h2><p className="mt-3 whitespace-pre-line leading-7">{l.description}</p>{l.vendor.workingHours && <p className="mt-3 flex items-center gap-2 text-sm text-muted"><Clock className="size-4" aria-hidden />{l.vendor.workingHours}</p>}</section>
+          <section><h2 className="text-2xl">Availability</h2><p className="mt-1 text-sm text-muted">Dates already booked on Mehfil. Everything else is open to enquire.</p><div className="mt-4 max-w-md"><AvailabilityCalendar listingId={l.id} /></div></section>
           {l.packages.length > 0 && <section><h2 className="text-2xl">Packages</h2><div className="mt-4 grid gap-4 sm:grid-cols-2">{l.packages.map((p: any) => (
             <div key={p.id} className="rounded-2xl border border-line bg-white p-5">
               <h3 className="text-lg">{p.name}</h3>

@@ -26,7 +26,7 @@ export class Harness {
 
   async start() {
     this.dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mehfil-pg-'));
-    this.pg = spawn(process.execPath, [path.join(__dirname, 'postgres.mjs'), this.dir, '54329'], { stdio: ['pipe', 'pipe', 'inherit'] });
+    this.pg = spawn(process.execPath, [path.join(__dirname, 'postgres.mjs'), this.dir, process.env.TEST_PG_PORT ?? '54329'], { stdio: ['pipe', 'pipe', 'inherit'] });
     await new Promise<void>((resolve, reject) => {
       this.pg.stdout.on('data', (d: Buffer) => { if (d.toString().includes('READY')) resolve(); });
       this.pg.on('exit', (code: number) => reject(new Error(`Postgres exited with ${code}`)));

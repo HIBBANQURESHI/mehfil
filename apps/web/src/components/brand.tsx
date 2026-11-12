@@ -4,10 +4,13 @@ import Link from 'next/link';
 const SIZES = { sm: 'h-10', md: 'h-12', lg: 'h-20' } as const;
 
 /** The Mehfil logo. The file is a transparent cut-out, so it sits cleanly on the light backgrounds used across the site. */
-export function Logo({ href = '/', size = 'md' }: { href?: string; size?: keyof typeof SIZES }) {
+/** `onDark` swaps in the glowing version of the logo, which stays readable on the burgundy dashboard sidebar. */
+export function Logo({ href = '/', size = 'md', onDark = false }: { href?: string; size?: keyof typeof SIZES; onDark?: boolean }) {
   return (
     <Link href={href} className="inline-flex shrink-0 items-center" aria-label={`${brand.name} home`}>
-      <img src="/brand/logo.webp" alt={brand.name} width={1100} height={691} className={`${SIZES[size]} w-auto`} />
+      {onDark
+        ? <img src="/brand/logo-glow.webp" alt={brand.name} width={900} height={617} className={`${SIZES[size]} w-auto drop-shadow-[0_2px_10px_rgba(212,173,99,.35)]`} />
+        : <img src="/brand/logo.webp" alt={brand.name} width={1100} height={691} className={`${SIZES[size]} w-auto`} />}
     </Link>
   );
 }

@@ -8,7 +8,7 @@ import { ContactSchema } from '@mehfil/shared';
 
 interface SearchQuery extends PageQuery { q?: string; category?: string; city?: string; area?: string; date?: string; slot?: string; guests?: string; minPrice?: string; maxPrice?: string; rating?: string; indoorOutdoor?: string; amenities?: string; sort?: string }
 
-const CARD = {
+export const CARD = {
   id: true, slug: true, title: true, startingPrice: true, priceUnit: true, capacityMin: true, capacityMax: true, avgRating: true, reviewCount: true,
   category: { select: { id: true, name: true, slug: true } }, city: { select: { name: true } }, area: { select: { name: true } },
   vendor: { select: { id: true, businessName: true, slug: true, identityVerifiedAt: true, businessVerifiedAt: true, featuredUntil: true, logoUrl: true } },

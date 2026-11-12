@@ -9,6 +9,7 @@ import { PrismaService, Tx } from '../common/prisma.service';
 import { SettingsService } from '../common/settings.service';
 import { NotificationsService } from '../notifications/notifications.module';
 import { AvailabilityService } from '../availability/availability.service';
+import { CommissionService } from '../payments/commission.service';
 
 export type Actor = { type: 'CUSTOMER' | 'VENDOR' | 'ADMIN' | 'SYSTEM'; id?: string | null };
 
@@ -21,13 +22,14 @@ const DETAIL = {
   payments: { orderBy: { createdAt: 'desc' as const }, include: { refunds: true } },
   review: true,
   quotation: { include: { lines: { orderBy: { sortOrder: 'asc' as const } } } },
+  cashReceipts: { orderBy: { createdAt: 'desc' as const } },
 } satisfies Prisma.BookingInclude;
 
 const OPEN_STATUSES: DbStatus[] = ['PENDING_VENDOR_CONFIRMATION', 'AWAITING_PAYMENT', 'CONFIRMED', 'IN_PROGRESS', 'SERVICE_COMPLETED', 'CANCELLATION_REQUESTED', 'DISPUTED'];
 
 @Injectable()
 export class BookingsService {
-  constructor(private prisma: PrismaService, private notifications: NotificationsService, private settings: SettingsService, private availability: AvailabilityService, private audit: AuditService) {}
+  constructor(private prisma: PrismaService, private notifications: NotificationsService, private settings: SettingsService, private availability: AvailabilityService, private audit: AuditService, private commission: CommissionService) {}
 
   /** The single place booking status changes. Rejects any move the state machine doesn't allow and records it on the timeline. */
   async transition(tx: Tx, booking: Booking, to: DbStatus, actor: Actor, note?: string | null, extra: Prisma.BookingUncheckedUpdateInput = {}) {
@@ -72,6 +74,7 @@ export class BookingsService {
 
   /** The vendor reconfirms the date, which places a timed hold on the calendar. */
   async vendorConfirm(auth: AuthCtx, id: string) {
+    await this.commission.assertNotRestricted(auth.vendor!.id);
     const { holdHours } = await this.settings.all();
     return this.prisma.$transaction(async (tx) => {
       const b = await this.locked(tx, id);

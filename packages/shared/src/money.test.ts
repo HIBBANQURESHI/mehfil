@@ -1,3 +1,4 @@
+import { defaultAllocation, workingBudget } from './planning';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { applyBps, commissionForPayment, commissionReversalForRefund, computeQuotationTotals, refundBpsForCancellation, splitByBps } from './money';
@@ -49,4 +50,14 @@ test('cancellation refund uses the best tier still reachable', () => {
   assert.equal(refundBpsForCancellation(tiers, 30), 9000);
   assert.equal(refundBpsForCancellation(tiers, 10), 5000);
   assert.equal(refundBpsForCancellation(tiers, 3), 0);
+});
+
+test('default budget split always totals exactly 100%', () => {
+  for (const services of [['venue'], ['venue', 'catering', 'decoration'], ['venue', 'catering', 'decoration', 'photography', 'makeup', 'planner', 'outfits', 'jewellery', 'other']]) {
+    assert.equal(defaultAllocation(services).reduce((a, x) => a + x.bps, 0), 10_000);
+  }
+  assert.deepEqual(defaultAllocation([]), []);
+  assert.equal(workingBudget('20_40L'), 300_000_000);
+  assert.equal(workingBudget('UNDER_10L'), 100_000_000);
+  assert.equal(workingBudget('UNDECIDED'), null);
 });

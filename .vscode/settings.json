@@ -1,0 +1,5 @@
+{
+  // Use the repo's TypeScript (the same version the build and CI use) instead of the one bundled with VS Code.
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true
+}

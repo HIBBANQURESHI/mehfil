@@ -3,6 +3,7 @@ import { formatBps, formatPKR } from '@mehfil/shared';
 import { Phone, Star } from 'lucide-react';
 import { useParams, useSearchParams } from 'next/navigation';
 import { Suspense, useState } from 'react';
+import { CustomerCash } from '@/components/cash';
 import { MilestoneTable, QuoteBreakdown, Timeline } from '@/components/shared-pages';
 import { Button, Card, ErrorBox, FormError, PageHeader, ReasonAction, Spinner, Stat, Status, Textarea, useForm, useToast } from '@/components/ui';
 import { api, useApi } from '@/lib/api';
@@ -10,8 +11,9 @@ import { fmtDate, fmtDateTime, SLOT_LABEL } from '@/lib/format';
 
 function Detail() {
   const { id } = useParams<{ id: string }>();
-  const { data: b, error, isLoading, mutate } = useApi<any>(`/bookings/${id}`);
   const payment = useSearchParams().get('payment');
+  // Right after checkout the gateway may still be confirming, so the page checks back for a short while.
+  const { data: b, error, isLoading, mutate } = useApi<any>(`/bookings/${id}`, { refreshInterval: (d: any) => (payment === 'pending' && d?.status === 'AWAITING_PAYMENT' ? 4000 : 0) });
   const toast = useToast();
   const [rating, setRating] = useState(0);
   const review = useForm({ comment: '' });
@@ -26,6 +28,8 @@ function Detail() {
     <>
       <PageHeader title={b.listing.title} sub={`${b.code} · ${b.vendor.businessName} · ${fmtDate(b.eventDate)} (${SLOT_LABEL[b.slot]})`} action={<Status value={b.status} />} />
       {payment === 'success' && <p className="mb-4 rounded-lg bg-good/10 p-3 text-sm text-good">Thank you. Your booking updates as soon as the payment is verified.</p>}
+      {payment === 'pending' && <p className="mb-4 rounded-lg bg-gold/20 p-3 text-sm">We are confirming your payment with the bank. This page updates on its own in a moment.</p>}
+      {payment === 'cancelled' && <p className="mb-4 rounded-lg bg-blush p-3 text-sm">Payment cancelled. Nothing was charged. You can pay whenever you are ready.</p>}
       {payment === 'fail' && <p className="mb-4 rounded-lg bg-bad/8 p-3 text-sm text-bad">That payment did not go through. You can try again.</p>}
       {b.status === 'AWAITING_PAYMENT' && b.holdExpiresAt && <p className="mb-4 rounded-lg bg-gold/20 p-3 text-sm">Your date is held until <b>{fmtDateTime(b.holdExpiresAt)}</b>. Pay the advance to confirm it.</p>}
       {b.status === 'PENDING_VENDOR_CONFIRMATION' && <p className="mb-4 rounded-lg bg-blush p-3 text-sm">Waiting for the vendor to reconfirm your date. Nothing to pay yet.</p>}
@@ -33,6 +37,7 @@ function Detail() {
       <div className="mt-5 grid gap-5 lg:grid-cols-[1fr_340px]">
         <div className="space-y-5">
           <Card title="Payment schedule"><MilestoneTable milestones={b.milestones} onPay={pay} payingEnabled={payable} /></Card>
+          <CustomerCash b={b} mutate={() => mutate()} />
           <Card title="What you agreed"><QuoteBreakdown q={b.quotation} /></Card>
           {b.status === 'SERVICE_COMPLETED' && <Card title="Was your event completed?"><p className="text-sm text-muted">The vendor marked this as complete. Please confirm, or tell us if something went wrong.</p><div className="mt-3 flex flex-wrap gap-2"><Button onClick={async () => { await api(`/bookings/${id}/confirm-completion`, { method: 'POST', body: {} }); mutate(); }}>Yes, all done</Button></div></Card>}
           {b.status === 'COMPLETED' && !b.review && <Card title="Leave a review"><div className="mb-3 flex gap-1" role="radiogroup" aria-label="Rating">{[1, 2, 3, 4, 5].map((n) => <button key={n} role="radio" aria-checked={rating === n} aria-label={`${n} stars`} onClick={() => setRating(n)}><Star className={`size-7 ${n <= rating ? 'fill-gold text-gold' : 'text-line'}`} /></button>)}</div><Textarea label="Your experience" {...review.bind('comment')} /><div className="mt-2"><FormError message={review.formError} /></div><Button className="mt-3" busy={review.busy} disabled={!rating} onClick={() => review.submit(async () => { await api(`/bookings/${id}/review`, { body: { rating, comment: review.values.comment } }); mutate(); })}>Submit review</Button></Card>}

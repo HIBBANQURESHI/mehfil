@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { DocumentType, EventType, Slot, TicketCategory } from './status';
 import { MAX_AMOUNT } from './money';
+import { BUDGET_BAND_KEYS, keysOf, PLANNING_STATUS, SERVICE_KEYS, VENUE_PREFERENCES, VENUE_STATUS, WEDDING_SERVICES, WEDDING_STYLES } from './planning';
 
 const paisa = z.number().int().min(0).max(MAX_AMOUNT);
 const bps = z.number().int().min(0).max(10_000);
@@ -57,7 +58,17 @@ export const SettingsSchema = z.object({
   disputeWindowDays: z.number().int().min(0).max(60).optional(),
   autoCompleteDays: z.number().int().min(1).max(60).optional(),
   requireListingReview: z.boolean().optional(),
+  allowCash: z.boolean().optional(),
+  requireOnlineDeposit: z.boolean().optional(),
+  cashAutoConfirmDays: z.number().int().min(1).max(30).optional(),
+  commissionDueDays: z.number().int().min(1).max(90).optional(),
+  restrictOverdueVendors: z.boolean().optional(),
+  commissionPaymentInstructions: z.string().trim().max(2000).optional(),
 });
+export const PayMethodSchema = z.object({ method: z.enum(['ONLINE', 'CASH']) });
+export const CashRecordSchema = z.object({ milestoneId: uuid, receivedOn: isoDate, note: optText(300) });
+export const CashResolveSchema = z.object({ action: z.enum(['CONFIRM', 'REJECT']), reason: text(500) });
+export const CommissionPaySchema = z.object({ amount: paisa.min(1).optional() });
 
 export const VendorProfileSchema = z.object({
   businessName: text(120), primaryCategoryId: uuid.optional().nullable(), description: z.string().trim().max(4000).optional().nullable(),
@@ -93,14 +104,38 @@ export const AddOnSchema = z.object({ name: text(120), price: paisa });
 export const ListingDecisionSchema = z.object({ decision: z.enum(['APPROVE', 'REJECT', 'PAUSE']), reason: optText(1000) });
 export const BlockDatesSchema = z.object({ dates: z.array(isoDate).min(1).max(120), slot: z.enum(Slot).default('FULL_DAY'), note: optText(200) });
 
+const month = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Use YYYY-MM');
+const guests = z.number().int().min(1).max(100000);
+
 export const WeddingSchema = z.object({
   title: text(120), cityId: optUuid, budget: paisa.optional().nullable(), guestCount: z.number().int().min(0).max(100000).optional().nullable(),
   dateFrom: isoDate.optional().nullable(), dateTo: isoDate.optional().nullable(), eventTypes: z.array(z.enum(EventType)).max(10).default([]),
+  targetMonth: month.optional().nullable(), partnerOne: optText(60), partnerTwo: optText(60),
+  planningStatus: z.enum(keysOf(PLANNING_STATUS)).optional().nullable(), budgetBand: z.enum(BUDGET_BAND_KEYS).optional().nullable(),
+  style: z.enum(keysOf(WEDDING_STYLES)).optional().nullable(), venuePreference: z.enum(keysOf(VENUE_PREFERENCES)).optional().nullable(),
+  services: z.array(z.enum(SERVICE_KEYS)).max(WEDDING_SERVICES.length).optional(), notes: optText(1000),
 });
+
+/** Everything the Plan My Wedding wizard collects. Nothing beyond the events list is required: a plan can start as a rough draft. */
+export const PlanEventSchema = z.object({
+  type: z.enum(EventType), name: optText(60), date: isoDate.optional().nullable(), guestCount: guests.optional().nullable(),
+  cityId: optUuid, areaId: optUuid, venueStatus: z.enum(keysOf(VENUE_STATUS)).optional().nullable(), budget: paisa.optional().nullable(),
+});
+export const PlanSchema = z.object({
+  partnerOne: optText(60), partnerTwo: optText(60),
+  weddingDate: isoDate.optional().nullable(), targetMonth: month.optional().nullable(),
+  cityId: optUuid, guestCount: guests.optional().nullable(), planningStatus: z.enum(keysOf(PLANNING_STATUS)).optional().nullable(),
+  events: z.array(PlanEventSchema).max(12).default([]),
+  budgetBand: z.enum(BUDGET_BAND_KEYS).optional().nullable(), budget: paisa.optional().nullable(),
+  style: z.enum(keysOf(WEDDING_STYLES)).optional().nullable(), venuePreference: z.enum(keysOf(VENUE_PREFERENCES)).optional().nullable(),
+  services: z.array(z.enum(SERVICE_KEYS)).max(WEDDING_SERVICES.length).default([]), notes: optText(1000),
+}).refine((v) => v.budgetBand !== 'CUSTOM' || (v.budget ?? 0) > 0, { message: 'Enter your budget amount', path: ['budget'] });
 export const EventSchema = z.object({
   type: z.enum(EventType), name: optText(100), date: isoDate.optional().nullable(), slot: z.enum(Slot).optional().nullable(), venue: optText(200),
   guestCount: z.number().int().min(0).max(100000).optional().nullable(), budget: paisa.optional().nullable(),
+  cityId: optUuid, areaId: optUuid, venueStatus: z.enum(keysOf(VENUE_STATUS)).optional().nullable(),
 });
+export const BudgetUpdateSchema = z.object({ label: text(100).optional(), planned: paisa });
 export const BudgetItemSchema = z.object({ label: text(100), categoryId: optUuid, planned: paisa });
 export const ChecklistItemSchema = z.object({ title: text(200), dueDate: isoDate.optional().nullable(), done: z.boolean().optional() });
 

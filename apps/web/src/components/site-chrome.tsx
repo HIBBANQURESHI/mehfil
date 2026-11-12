@@ -1,30 +1,13 @@
 import { brand } from '@mehfil/shared';
 import Link from 'next/link';
 import { Logo } from './brand';
-import { LinkButton } from './ui';
+import { SiteNav } from './site-nav';
 import { getMe } from '@/lib/server';
 
 export async function SiteHeader() {
   const me = await getMe();
   const home = me?.adminSession ? '/admin' : me?.vendor ? '/vendor' : '/account';
-  return (
-    <header className="sticky top-0 z-30 border-b border-line bg-warm/95 backdrop-blur">
-      <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-4 px-4">
-        <Logo size="md" />
-        <nav className="hidden items-center gap-6 text-sm md:flex">
-          <Link href="/c/banquet-halls" className="hover:text-ruby">Venues</Link>
-          <Link href="/c/catering" className="hover:text-ruby">Catering</Link>
-          <Link href="/c/decoration" className="hover:text-ruby">Decor</Link>
-          <Link href="/c/photography" className="hover:text-ruby">Photography</Link>
-          <Link href="/categories" className="hover:text-ruby">All services</Link>
-        </nav>
-        <div className="flex items-center gap-2">
-          <Link href="/list-your-business" className="hidden text-sm font-medium text-ruby lg:block">List your business</Link>
-          {me ? <LinkButton href={home}>My dashboard</LinkButton> : <><LinkButton href="/login" variant="ghost">Sign in</LinkButton><LinkButton href="/register" className="hidden sm:inline-flex">Get started</LinkButton></>}
-        </div>
-      </div>
-    </header>
-  );
+  return <SiteNav home={home} signedIn={!!me} />;
 }
 
 export function SiteFooter() {

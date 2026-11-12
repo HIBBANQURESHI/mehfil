@@ -1,7 +1,8 @@
 import { useLocalSearchParams } from 'expo-router';
 import { useRef, useState } from 'react';
-import { Alert, FlatList, KeyboardAvoidingView, Platform, TextInput, View } from 'react-native';
+import { FlatList, KeyboardAvoidingView, Platform, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { showAlert } from '@/components/alert';
 import { Button, c, ErrorView, font, Loading, Text } from '@/components/ui';
 import { api, useApi } from '@/lib/api';
 import { fmtDateTime } from '@/lib/format';
@@ -13,7 +14,7 @@ export default function Page() {
   const list = useRef<FlatList>(null);
   if (error) return <ErrorView error={error} retry={() => mutate()} />;
   if (isLoading || !data) return <Loading />;
-  const send = async () => { setBusy(true); try { await api(`/conversations/${id}/messages`, { body: { body: text } }); setText(''); await mutate(); } catch (e: any) { Alert.alert('Could not send', e.message); } finally { setBusy(false); } };
+  const send = async () => { setBusy(true); try { await api(`/conversations/${id}/messages`, { body: { body: text } }); setText(''); await mutate(); } catch (e: any) { showAlert('Could not send', e.message); } finally { setBusy(false); } };
   return (
     <SafeAreaView edges={['bottom']} style={{ flex: 1, backgroundColor: c.warmWhite }}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={90}>

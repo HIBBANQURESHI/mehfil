@@ -1,7 +1,8 @@
 import { formatBps, formatPKR } from '@mehfil/shared';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { Alert } from 'react-native';
+
+import { showAlert } from '@/components/alert';
 import { Button, Card, ErrorView, Loading, Row, Screen, Status, Text } from '@/components/ui';
 import { api, useApi } from '@/lib/api';
 import { fmtDate, fmtDateTime, SLOT_LABEL } from '@/lib/format';
@@ -13,8 +14,8 @@ export default function Page() {
   if (error) return <ErrorView error={error} retry={() => mutate()} />;
   if (isLoading || !q) return <Loading />;
   const open = ['SENT', 'VIEWED'].includes(q.status);
-  const accept = async () => { setBusy(true); try { const b = await api(`/quotations/${id}/accept`, { method: 'POST', body: {} }); router.replace(`/bookings/${b.id}`); } catch (e: any) { Alert.alert('Could not accept', e.message); mutate(); } finally { setBusy(false); } };
-  const reject = () => Alert.alert('Decline this quotation?', undefined, [{ text: 'Back' }, { text: 'Decline', style: 'destructive', onPress: async () => { await api(`/quotations/${id}/reject`, { body: { reason: null } }); mutate(); } }]);
+  const accept = async () => { setBusy(true); try { const b = await api(`/quotations/${id}/accept`, { method: 'POST', body: {} }); router.replace(`/bookings/${b.id}`); } catch (e: any) { showAlert('Could not accept', e.message); mutate(); } finally { setBusy(false); } };
+  const reject = () => showAlert('Decline this quotation?', undefined, [{ text: 'Back' }, { text: 'Decline', style: 'destructive', onPress: async () => { await api(`/quotations/${id}/reject`, { body: { reason: null } }); mutate(); } }]);
   return (
     <Screen onRefresh={() => mutate()}>
       <Text variant="h1">{q.vendor.businessName}</Text><Text variant="muted">{q.code} · {fmtDate(q.enquiry.eventDate)} ({SLOT_LABEL[q.enquiry.slot]})</Text><Status value={q.status} />

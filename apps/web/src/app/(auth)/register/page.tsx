@@ -7,7 +7,9 @@ import { Button, FormError, Input, useForm } from '@/components/ui';
 import { api } from '@/lib/api';
 
 function Form() {
-  const isVendor = useSearchParams().get('type') === 'vendor';
+  const params = useSearchParams();
+  const isVendor = params.get('type') === 'vendor';
+  const next = params.get('next');
   const f = useForm({ name: '', phone: '', email: '', password: '' });
   const [terms, setTerms] = useState(false);
   const router = useRouter();
@@ -15,7 +17,7 @@ function Form() {
     e.preventDefault();
     f.submit(async () => {
       const r = await api('/auth/register', { body: { ...f.values, acceptTerms: terms } });
-      router.push(`/verify?phone=${encodeURIComponent(r.phone)}&next=${isVendor ? '/vendor' : '/account'}`);
+      router.push(`/verify?phone=${encodeURIComponent(r.phone)}&next=${encodeURIComponent(next ?? (isVendor ? '/vendor' : '/account'))}`);
     });
   };
   return (
@@ -27,7 +29,7 @@ function Form() {
       <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1 accent-[#8F3048]" checked={terms} onChange={(e) => setTerms(e.target.checked)} /><span>I agree to the <Link href="/terms" className="text-ruby underline">terms</Link> and <Link href="/privacy" className="text-ruby underline">privacy policy</Link></span></label>
       <FormError message={f.formError} />
       <Button className="w-full" busy={f.busy}>Continue</Button>
-      <p className="text-center text-sm">Have an account? <Link href="/login" className="text-ruby">Sign in</Link></p>
+      <p className="text-center text-sm">Have an account? <Link href={next ? `/login?next=${encodeURIComponent(next)}` : '/login'} className="text-ruby">Sign in</Link></p>
     </form>
   );
 }

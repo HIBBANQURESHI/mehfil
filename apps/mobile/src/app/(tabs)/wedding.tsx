@@ -20,9 +20,9 @@ export default function Wedding() {
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
         {LINKS.map(([label, href, Icon]) => <Pressable key={label} accessibilityRole="button" onPress={() => router.push(href)} style={{ width: '47%', flexGrow: 1, flexDirection: 'row', gap: 10, alignItems: 'center', backgroundColor: '#fff', borderWidth: 1, borderColor: c.border, borderRadius: 14, padding: 14 }}><Icon color={c.ruby} size={20} /><Text>{label}</Text></Pressable>)}
       </View>
-      {error ? <ErrorView error={error} retry={() => mutate()} /> : isLoading || !data ? <Loading /> : !data.length ? <Card><Empty title="Start your wedding plan" body="Add Mehndi, Baraat, Walima, your budget and a checklist." action={<Button title="Create wedding" onPress={() => router.push('/wedding/new')} />} /></Card> : <>
+      {error ? <ErrorView error={error} retry={() => mutate()} /> : isLoading || !data ? <Loading /> : !data.length ? <Card><Empty title="Start your wedding plan" body="Add Mehndi, Baraat, Walima, your budget and a checklist." action={<Button title="Create wedding" onPress={() => router.push('/plan')} />} /></Card> : <>
         {data.map((w) => <Pressable key={w.id} accessibilityRole="button" onPress={() => router.push(`/wedding/${w.id}`)}><Card><Text variant="h2">{w.title}</Text><Text variant="muted">{w.dateFrom ? fmtDate(w.dateFrom) : 'Date not set'}{w.budget !== null ? ` · ${formatPKR(w.budget)}` : ''}</Text><Text>{w.events.map((e: any) => e.name ?? statusLabel(e.type)).join(' · ')}</Text></Card></Pressable>)}
-        <Button title="Add another wedding" variant="outline" onPress={() => router.push('/wedding/new')} />
+        <Button title="Add another wedding" variant="outline" onPress={() => router.push('/plan')} />
       </>}
     </Screen>
   );

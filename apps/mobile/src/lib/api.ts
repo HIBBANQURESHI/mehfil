@@ -1,7 +1,7 @@
 import Constants from 'expo-constants';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
-import useSWR, { SWRConfiguration } from 'swr';
+import useSWR, { mutate as mutateGlobal, SWRConfiguration } from 'swr';
 
 const LOCAL = /\/\/(localhost|127\.0\.0\.1)(?=[:/]|$)/;
 // On a phone, "localhost" is the phone itself. During development, point it at the computer Expo is serving
@@ -63,6 +63,11 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new ApiError(data.message ?? 'Something went wrong. Please try again.', res.status, data.code, data.fields, data);
   return data as T;
+}
+
+/** Re-fetches every cached notification list and count, so the bell badge updates wherever it is shown. */
+export function refreshNotifications() {
+  return mutateGlobal((key) => typeof key === 'string' && key.startsWith('/notifications'));
 }
 
 export function useApi<T = any>(path: string | null, config?: SWRConfiguration) {

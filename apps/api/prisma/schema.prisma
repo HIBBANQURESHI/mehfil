@@ -151,6 +151,7 @@ enum MediaType {
 
 enum EventType {
   DHOLKI
+  MAYUN
   MEHNDI
   NIKAH
   BARAAT
@@ -362,25 +363,27 @@ model AdminMember {
 }
 
 model City {
-  id       String    @id @default(uuid())
-  name     String    @unique
-  slug     String    @unique
-  active   Boolean   @default(true)
+  id       String         @id @default(uuid())
+  name     String         @unique
+  slug     String         @unique
+  active   Boolean        @default(true)
   areas    Area[]
   users    User[]
   vendors  Vendor[]
   listings Listing[]
   weddings Wedding[]
+  events   WeddingEvent[]
 }
 
 model Area {
-  id       String    @id @default(uuid())
+  id       String         @id @default(uuid())
   cityId   String
   name     String
   slug     String
-  city     City      @relation(fields: [cityId], references: [id], onDelete: Cascade)
+  city     City           @relation(fields: [cityId], references: [id], onDelete: Cascade)
   vendors  Vendor[]
   listings Listing[]
+  events   WeddingEvent[]
 
   @@unique([cityId, slug])
 }
@@ -443,20 +446,21 @@ model Vendor {
   createdAt             DateTime     @default(now())
   updatedAt             DateTime     @updatedAt
 
-  primaryCategory Category?        @relation(fields: [primaryCategoryId], references: [id])
-  city            City?            @relation(fields: [cityId], references: [id])
-  area            Area?            @relation(fields: [areaId], references: [id])
-  members         VendorMember[]
-  documents       VendorDocument[]
-  listings        Listing[]
-  enquiries       Enquiry[]
-  quotations      Quotation[]
-  bookings        Booking[]
-  reviews         Review[]
-  settlements     Settlement[]
-  payouts         Payout[]
-  conversations   Conversation[]
-  ledger          LedgerEntry[]
+  primaryCategory    Category?           @relation(fields: [primaryCategoryId], references: [id])
+  city               City?               @relation(fields: [cityId], references: [id])
+  area               Area?               @relation(fields: [areaId], references: [id])
+  members            VendorMember[]
+  documents          VendorDocument[]
+  listings           Listing[]
+  enquiries          Enquiry[]
+  quotations         Quotation[]
+  bookings           Booking[]
+  reviews            Review[]
+  settlements        Settlement[]
+  payouts            Payout[]
+  commissionPayments CommissionPayment[]
+  conversations      Conversation[]
+  ledger             LedgerEntry[]
 
   @@index([status])
 }
@@ -612,38 +616,75 @@ model SavedListing {
 }
 
 model Wedding {
-  id          String          @id @default(uuid())
-  customerId  String
-  title       String
-  cityId      String?
-  budget      BigInt?
-  guestCount  Int?
-  dateFrom    DateTime?       @db.Date
-  dateTo      DateTime?       @db.Date
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
-  customer    User            @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  city        City?           @relation(fields: [cityId], references: [id])
-  events      WeddingEvent[]
-  budgetItems BudgetItem[]
-  checklist   ChecklistItem[]
-  enquiries   Enquiry[]
+  id              String          @id @default(uuid())
+  customerId      String
+  title           String
+  cityId          String?
+  budget          BigInt?
+  guestCount      Int?
+  dateFrom        DateTime?       @db.Date
+  dateTo          DateTime?       @db.Date
+  /// Used when the exact date isn't known yet, as YYYY-MM.
+  targetMonth     String?
+  partnerOne      String?
+  partnerTwo      String?
+  planningStatus  PlanningStatus?
+  budgetBand      String?
+  style           String?
+  venuePreference String?
+  /// Service keys from @mehfil/shared WEDDING_SERVICES.
+  services        String[]        @default([])
+  notes           String?
+  /// Gemini personalisation. Runs in the background, so creating a wedding never waits on it.
+  aiStatus        AiStatus        @default(NONE)
+  aiNote          String?
+  aiAllocation    Json?
+  aiAttempts      Int             @default(0)
+  aiLockedUntil   DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  customer        User            @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  city            City?           @relation(fields: [cityId], references: [id])
+  events          WeddingEvent[]
+  budgetItems     BudgetItem[]
+  checklist       ChecklistItem[]
+  enquiries       Enquiry[]
 
   @@index([customerId])
+  @@index([aiStatus])
+}
+
+enum PlanningStatus {
+  JUST_STARTED
+  ALREADY_PLANNING
+  URGENT
+}
+
+enum AiStatus {
+  NONE
+  PENDING
+  READY
+  FAILED
 }
 
 model WeddingEvent {
-  id         String    @id @default(uuid())
-  weddingId  String
-  type       EventType
-  name       String?
-  date       DateTime? @db.Date
-  slot       Slot?
-  venue      String?
-  guestCount Int?
-  budget     BigInt?
-  wedding    Wedding   @relation(fields: [weddingId], references: [id], onDelete: Cascade)
-  enquiries  Enquiry[]
+  id          String    @id @default(uuid())
+  weddingId   String
+  type        EventType
+  name        String?
+  date        DateTime? @db.Date
+  slot        Slot?
+  venue       String?
+  guestCount  Int?
+  budget      BigInt?
+  cityId      String?
+  areaId      String?
+  /// NEED_VENUE, BOOKED or NOT_SURE
+  venueStatus String?
+  wedding     Wedding   @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  city        City?     @relation(fields: [cityId], references: [id])
+  area        Area?     @relation(fields: [areaId], references: [id])
+  enquiries   Enquiry[]
 
   @@index([weddingId])
 }
@@ -654,6 +695,8 @@ model BudgetItem {
   categoryId String?
   label      String
   planned    BigInt
+  /// Set on lines created from a service choice, so bookings and suggestions can be matched to them.
+  serviceKey String?
   wedding    Wedding   @relation(fields: [weddingId], references: [id], onDelete: Cascade)
   category   Category? @relation(fields: [categoryId], references: [id])
 
@@ -667,6 +710,8 @@ model ChecklistItem {
   done      Boolean   @default(false)
   dueDate   DateTime? @db.Date
   sortOrder Int       @default(0)
+  /// AUTO from the plan, AI from Gemini, CUSTOM from the customer.
+  source    String    @default("CUSTOM")
   wedding   Wedding   @relation(fields: [weddingId], references: [id], onDelete: Cascade)
 
   @@index([weddingId])
@@ -824,6 +869,7 @@ model Booking {
   settlements            Settlement[]
   tickets                SupportTicket[]
   ledger                 LedgerEntry[]
+  cashReceipts           CashReceipt[]
 
   @@index([customerId])
   @@index([vendorId, status])
@@ -832,18 +878,21 @@ model Booking {
 }
 
 model BookingMilestone {
-  id         String           @id @default(uuid())
-  bookingId  String
-  label      String
-  amount     BigInt
-  dueRule    MilestoneDueRule
-  dueDate    DateTime?        @db.Date
-  sortOrder  Int              @default(0)
-  status     MilestoneStatus  @default(PENDING)
-  paidAt     DateTime?
-  remindedAt DateTime?
-  booking    Booking          @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  payments   Payment[]
+  id              String           @id @default(uuid())
+  bookingId       String
+  label           String
+  amount          BigInt
+  dueRule         MilestoneDueRule
+  dueDate         DateTime?        @db.Date
+  sortOrder       Int              @default(0)
+  status          MilestoneStatus  @default(PENDING)
+  paidAt          DateTime?
+  remindedAt      DateTime?
+  /// What the customer said they'll use for this instalment: ONLINE or CASH. Informational only.
+  preferredMethod String?
+  booking         Booking          @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  payments        Payment[]
+  cashReceipts    CashReceipt[]
 
   @@index([bookingId])
 }
@@ -863,30 +912,35 @@ model BookingEvent {
 }
 
 model Payment {
-  id                 String           @id @default(uuid())
-  code               String           @unique
-  bookingId          String
-  milestoneId        String
-  amount             BigInt
-  commission         BigInt?
-  providerFee        BigInt?
-  refundedAmount     BigInt           @default(0)
-  commissionReversed BigInt           @default(0)
-  status             PaymentStatus    @default(INITIATED)
-  provider           String
-  collectedBy        CollectedBy      @default(PLATFORM)
-  providerRef        String?          @unique
-  idempotencyKey     String           @unique
-  checkoutUrl        String?
-  failureReason      String?
-  succeededAt        DateTime?
-  createdAt          DateTime         @default(now())
-  updatedAt          DateTime         @updatedAt
-  booking            Booking          @relation(fields: [bookingId], references: [id])
-  milestone          BookingMilestone @relation(fields: [milestoneId], references: [id])
-  refunds            Refund[]
-  settlement         Settlement?
-  ledger             LedgerEntry[]
+  id                   String           @id @default(uuid())
+  code                 String           @unique
+  bookingId            String
+  milestoneId          String
+  amount               BigInt
+  commission           BigInt?
+  providerFee          BigInt?
+  refundedAmount       BigInt           @default(0)
+  commissionReversed   BigInt           @default(0)
+  status               PaymentStatus    @default(INITIATED)
+  provider             String
+  collectedBy          CollectedBy      @default(PLATFORM)
+  /// For money the vendor collected (cash or direct transfer): when Mehfil's commission on it falls due.
+  commissionDueAt      DateTime?
+  commissionReminderAt DateTime?
+  commissionOverdueAt  DateTime?
+  cashReceipt          CashReceipt?
+  providerRef          String?          @unique
+  idempotencyKey       String           @unique
+  checkoutUrl          String?
+  failureReason        String?
+  succeededAt          DateTime?
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+  booking              Booking          @relation(fields: [bookingId], references: [id])
+  milestone            BookingMilestone @relation(fields: [milestoneId], references: [id])
+  refunds              Refund[]
+  settlement           Settlement?
+  ledger               LedgerEntry[]
 
   @@index([bookingId])
   @@index([status])
@@ -1171,4 +1225,55 @@ model PlatformSetting {
 model Sequence {
   name  String @id
   value Int    @default(0)
+}
+
+enum CashReceiptStatus {
+  PENDING
+  CONFIRMED
+  DISPUTED
+  REJECTED
+}
+
+/// Cash handed to the vendor, recorded by the vendor and confirmed by the customer. Only a confirmed
+/// receipt becomes a payment, and with it the commission the vendor owes Mehfil.
+model CashReceipt {
+  id            String            @id @default(uuid())
+  bookingId     String
+  milestoneId   String
+  amount        BigInt
+  receivedOn    DateTime          @db.Date
+  note          String?
+  status        CashReceiptStatus @default(PENDING)
+  recordedById  String
+  decidedById   String?
+  decidedAt     DateTime?
+  autoConfirmed Boolean           @default(false)
+  disputeReason String?
+  paymentId     String?           @unique
+  createdAt     DateTime          @default(now())
+  booking       Booking           @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  milestone     BookingMilestone  @relation(fields: [milestoneId], references: [id], onDelete: Cascade)
+  payment       Payment?          @relation(fields: [paymentId], references: [id])
+
+  @@index([status, createdAt])
+  @@index([bookingId])
+}
+
+/// A vendor paying the commission they owe on money they collected themselves.
+model CommissionPayment {
+  id             String        @id @default(uuid())
+  code           String        @unique
+  vendorId       String
+  amount         BigInt
+  status         PaymentStatus @default(INITIATED)
+  provider       String
+  providerRef    String?       @unique
+  idempotencyKey String        @unique
+  checkoutUrl    String?
+  requestedById  String
+  succeededAt    DateTime?
+  createdAt      DateTime      @default(now())
+  vendor         Vendor        @relation(fields: [vendorId], references: [id])
+
+  @@index([vendorId])
 }

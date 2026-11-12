@@ -2,7 +2,7 @@ import { BadRequestException, Body, ConflictException, Controller, Delete, Forbi
 import { Prisma } from '@prisma/client';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
-import { ADMIN_PERMISSIONS, AdminInviteSchema, AdminRoleSchema, AreaSchema, CancellationPolicySchema, CategorySchema, CitySchema, CommissionReceiptSchema, DisputeResolutionSchema, LedgerAdjustmentSchema, ListingDecisionSchema, ManualPaymentSchema, PayoutDecisionSchema, ReasonSchema, RefundDecisionSchema, ReviewModerationSchema, SettingsSchema, TicketReplySchema, TicketUpdateSchema, UserStatusSchema, VendorCommissionSchema, VendorDecisionSchema, VendorFeatureSchema } from '@mehfil/shared';
+import { ADMIN_PERMISSIONS, CashResolveSchema, AdminInviteSchema, AdminRoleSchema, AreaSchema, CancellationPolicySchema, CategorySchema, CitySchema, CommissionReceiptSchema, DisputeResolutionSchema, LedgerAdjustmentSchema, ListingDecisionSchema, ManualPaymentSchema, PayoutDecisionSchema, ReasonSchema, RefundDecisionSchema, ReviewModerationSchema, SettingsSchema, TicketReplySchema, TicketUpdateSchema, UserStatusSchema, VendorCommissionSchema, VendorDecisionSchema, VendorFeatureSchema } from '@mehfil/shared';
 import { AuditService } from '../common/audit.service';
 import { AdminOnly, Auth, AuthCtx } from '../common/auth';
 import { env } from '../common/config';
@@ -16,6 +16,7 @@ import { BookingsService } from '../marketplace/bookings.service';
 import { MarketplaceModule, recomputeRatings } from '../marketplace/marketplace.module';
 import { NotificationsService } from '../notifications/notifications.module';
 import { PaymentsService } from '../payments/payments.service';
+import { CommissionService } from '../payments/commission.service';
 import { VendorsModule, VendorsService } from '../vendors/vendors.module';
 
 interface Range { from?: string; to?: string }
@@ -35,7 +36,7 @@ function csv(rows: (string | number | null | undefined)[][]) {
 @AdminOnly()
 @Controller('admin')
 export class AdminController {
-  constructor(private prisma: PrismaService, private audit: AuditService, private settings: SettingsService, private bookings: BookingsService, private payments: PaymentsService, private vendors: VendorsService, private notifications: NotificationsService, private auth2: AuthService) {}
+  constructor(private prisma: PrismaService, private audit: AuditService, private settings: SettingsService, private bookings: BookingsService, private payments: PaymentsService, private vendors: VendorsService, private notifications: NotificationsService, private auth2: AuthService, private commission: CommissionService) {}
 
   /** Staff can only hand out permissions they hold themselves, which stops anyone promoting themselves through a role. */
   private assertGrantable(a: AuthCtx, permissions: string[]) {
@@ -312,6 +313,15 @@ export class AdminController {
     const p = paging(q); const where: Prisma.LedgerEntryWhereInput = { createdAt: range(q), ...(q.type ? { type: q.type as never } : {}) };
     const [items, total] = await Promise.all([this.prisma.ledgerEntry.findMany({ where, orderBy: { createdAt: 'desc' }, skip: p.skip, take: p.take, include: { booking: { select: { code: true } }, vendor: { select: { businessName: true } } } }), this.prisma.ledgerEntry.count({ where })]);
     return paged(items, total, p);
+  }
+  @AdminOnly('bookings.manage') @Get('cash-receipts') cashReceipts(@Query('status') status?: string) {
+    return this.prisma.cashReceipt.findMany({ where: status ? { status: status as never } : { status: { in: ['PENDING', 'DISPUTED'] } }, orderBy: { createdAt: 'desc' }, take: 200, include: { booking: { select: { id: true, code: true, customer: { select: { name: true } }, vendor: { select: { businessName: true } } } } } });
+  }
+  @AdminOnly('bookings.manage') @HttpCode(200) @Post('cash-receipts/:id/resolve') resolveCash(@Auth() a: AuthCtx, @Param('id') id: string, @Body(Z(CashResolveSchema)) b: any) { return this.payments.resolveCash(a, id, b.action, b.reason); }
+  @AdminOnly('finance.view') @Get('commission-statements') async statements() {
+    const vendors = await this.prisma.vendor.findMany({ where: { bookings: { some: { payments: { some: { collectedBy: 'VENDOR' } } } } }, select: { id: true, businessName: true } });
+    const rows = await Promise.all(vendors.map(async (v) => ({ ...v, ...(await this.commission.statement(v.id)).totals })));
+    return rows.sort((a, b) => b.overdue - a.overdue || b.outstanding - a.outstanding);
   }
   @AdminOnly('finance.view') @Get('commissions') async commissions() {
     return this.prisma.$queryRaw`

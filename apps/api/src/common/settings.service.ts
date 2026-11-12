@@ -9,6 +9,13 @@ export const SETTING_DEFAULTS = {
   disputeWindowDays: 3,
   autoCompleteDays: 7,
   requireListingReview: true,
+  // Cash and vendor-collected payments.
+  allowCash: true,
+  requireOnlineDeposit: false,
+  cashAutoConfirmDays: 3,
+  commissionDueDays: 7,
+  restrictOverdueVendors: true,
+  commissionPaymentInstructions: '',
 };
 export type Settings = typeof SETTING_DEFAULTS;
 

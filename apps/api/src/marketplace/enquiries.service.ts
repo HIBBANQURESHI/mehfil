@@ -9,12 +9,13 @@ import { addDays, addHours, dateOnly, paged, PageQuery, paging, today } from '..
 import { PrismaService, Tx } from '../common/prisma.service';
 import { SettingsService } from '../common/settings.service';
 import { NotificationsService } from '../notifications/notifications.module';
+import { CommissionService } from '../payments/commission.service';
 
 const QUOTE_INCLUDE = { lines: { orderBy: { sortOrder: 'asc' as const } }, milestones: { orderBy: { sortOrder: 'asc' as const } }, cancellationPolicy: true } satisfies Prisma.QuotationInclude;
 
 @Injectable()
 export class EnquiriesService {
-  constructor(private prisma: PrismaService, private notifications: NotificationsService, private settings: SettingsService) {}
+  constructor(private prisma: PrismaService, private notifications: NotificationsService, private settings: SettingsService, private commission: CommissionService) {}
 
   // ---- Enquiries -----------------------------------------------------------
 
@@ -117,12 +118,15 @@ export class EnquiriesService {
     };
   }
 
-  private assertCanQuote(auth: AuthCtx) {
+  private async assertCanQuote(auth: AuthCtx) {
     if (auth.vendor!.status !== 'APPROVED') throw new ForbiddenException('Your business must be verified before sending quotations.');
+    await this.commission.assertNotRestricted(auth.vendor!.id);
   }
 
   async createQuote(auth: AuthCtx, b: z.output<typeof QuotationSchema>) {
-    this.assertCanQuote(auth);
+    if (auth.vendor!.status !== 'APPROVED') throw new ForbiddenException('Your business must be verified before sending quotations.');
+    // Drafts are fine while commission is overdue; sending is what is paused.
+    if (b.send) await this.assertCanQuote(auth);
     const vendorId = auth.vendor!.id;
     const created = await this.prisma.$transaction(async (tx) => {
       const { enquiry, totals, amounts } = await this.buildQuote(tx, vendorId, b);
@@ -144,7 +148,7 @@ export class EnquiriesService {
   }
 
   async send(auth: AuthCtx, id: string) {
-    this.assertCanQuote(auth);
+    await this.assertCanQuote(auth);
     const { quoteValidityHours } = await this.settings.all();
     await this.prisma.$transaction(async (tx) => {
       const q = await tx.quotation.findFirst({ where: { id, vendorId: auth.vendor!.id }, include: { enquiry: { include: { listing: true } } } });
@@ -160,7 +164,7 @@ export class EnquiriesService {
 
   /** Replaces a live quotation with a new version. The customer can only ever accept the latest. */
   async revise(auth: AuthCtx, id: string, b: z.output<typeof QuotationSchema>) {
-    this.assertCanQuote(auth);
+    await this.assertCanQuote(auth);
     const vendorId = auth.vendor!.id;
     const { quoteValidityHours } = await this.settings.all();
     const created = await this.prisma.$transaction(async (tx) => {

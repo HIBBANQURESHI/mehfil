@@ -12,6 +12,7 @@ import { AnimatedSplash } from '@/components/animated-splash';
 import { c, font } from '@/components/ui';
 import { linkToRoute } from '@/lib/api';
 import { AuthProvider, useAuth } from '@/lib/auth';
+import { AlertHost } from '@/components/alert';
 
 SplashScreen.preventAutoHideAsync().catch(() => undefined);
 if (Platform.OS !== 'web') Notifications.setNotificationHandler({ handleNotification: async () => ({ shouldShowBanner: true, shouldShowList: true, shouldPlaySound: true, shouldSetBadge: false }) });
@@ -54,7 +55,7 @@ function Nav() {
         <Stack.Screen name="messages/[id]" options={title('Conversation')} />
         <Stack.Screen name="support/index" options={title('Help and support')} />
         <Stack.Screen name="support/[id]" options={title('Ticket')} />
-        <Stack.Screen name="wedding/new" options={{ ...title('Create wedding'), presentation: 'modal' }} />
+        <Stack.Screen name="plan" options={title("Plan my wedding")} />
         <Stack.Screen name="wedding/[id]" options={title('My wedding')} />
         <Stack.Screen name="settings" options={title('Account settings')} />
       </Stack>}
@@ -64,4 +65,4 @@ function Nav() {
   );
 }
 
-export default function Root() { return <SafeAreaProvider><AuthProvider><Nav /></AuthProvider></SafeAreaProvider>; }
+export default function Root() { return <SafeAreaProvider><AuthProvider><Nav /><AlertHost /></AuthProvider></SafeAreaProvider>; }

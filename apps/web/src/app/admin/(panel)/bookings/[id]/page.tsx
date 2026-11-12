@@ -3,6 +3,7 @@ import { formatBps, formatPKR, statusLabel } from '@mehfil/shared';
 import { Flag } from 'lucide-react';
 import { useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import { AdminCash } from '@/components/cash';
 import { MilestoneTable, QuoteBreakdown, Timeline } from '@/components/shared-pages';
 import { Button, Card, ErrorBox, FormError, Input, Modal, PageHeader, ReasonAction, Select, Spinner, Stat, Status, Textarea, useForm, useToast } from '@/components/ui';
 import { api, useApi } from '@/lib/api';
@@ -33,6 +34,7 @@ export default function Page() {
         <div className="space-y-5">
           <Card title="Payment schedule"><MilestoneTable milestones={b.milestones} onPay={canManual ? setManual : undefined} payingEnabled={canManual} /><p className="mt-2 text-xs text-muted">“Pay” here records money the customer paid the vendor directly. Use only with proof.</p></Card>
           <Card title="Transactions">{!b.payments.length ? <p className="text-sm text-muted">None yet.</p> : <ul className="divide-y divide-line text-sm">{b.payments.map((p: any) => <li key={p.id} className="flex items-center justify-between gap-3 py-2"><span>{p.code} <span className="text-xs text-muted">{p.provider} · {fmtDateTime(p.createdAt)}</span>{p.failureReason && <span className="block text-xs text-bad">{p.failureReason}</span>}</span><span className="flex items-center gap-2"><span className="tnum">{formatPKR(p.amount)}</span><Status value={p.status} /></span></li>)}</ul>}</Card>
+          <AdminCash b={b} mutate={() => mutate()} />
           <Card title="Ledger">{!b.ledger.length ? <p className="text-sm text-muted">No entries yet.</p> : <ul className="divide-y divide-line text-sm">{b.ledger.map((l: any) => <li key={l.id} className="flex justify-between py-1.5"><span>{statusLabel(l.type)}</span><span className="tnum">{formatPKR(l.amount)}</span></li>)}</ul>}</Card>
           <Card title="Original quotation"><QuoteBreakdown q={b.quotation} /></Card>
         </div>

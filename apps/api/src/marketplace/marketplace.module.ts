@@ -1,7 +1,7 @@
 import { BadRequestException, Body, ConflictException, Controller, ForbiddenException, Get, Header, HttpCode, Module, NotFoundException, Param, Post, Query, Req, Res } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
-import { EnquirySchema, formatPKR, MessageSchema, OptionalReasonSchema, QuotationSchema, ReasonSchema, RefundRequestSchema, ReviewSchema, StartConversationSchema, StartPaymentSchema, TicketReplySchema, TicketSchema, DeclineSchema } from '@mehfil/shared';
+import { CashRecordSchema, CommissionPaySchema, PayMethodSchema, EnquirySchema, formatPKR, MessageSchema, OptionalReasonSchema, QuotationSchema, ReasonSchema, RefundRequestSchema, ReviewSchema, StartConversationSchema, StartPaymentSchema, TicketReplySchema, TicketSchema, DeclineSchema } from '@mehfil/shared';
 import { Auth, AuthCtx, Public, VendorOnly } from '../common/auth';
 import { env } from '../common/config';
 import { addDays, paged, PageQuery, paging, today, Z } from '../common/http';
@@ -9,13 +9,16 @@ import { PrismaService } from '../common/prisma.service';
 import { NotificationsService } from '../notifications/notifications.module';
 import { PAYMENT_PROVIDER, PaymentsService } from '../payments/payments.service';
 import { NoProvider, SandboxProvider } from '../payments/providers';
+import { SafepayProvider, withQuery } from '../payments/safepay';
+import { CommissionService } from '../payments/commission.service';
+import { SettingsService } from '../common/settings.service';
 import { VendorsModule } from '../vendors/vendors.module';
 import { BookingsService } from './bookings.service';
 import { EnquiriesService } from './enquiries.service';
 
 @Controller()
 export class CustomerController {
-  constructor(private enquiries: EnquiriesService, private bookings: BookingsService, private payments: PaymentsService, private prisma: PrismaService) {}
+  constructor(private enquiries: EnquiriesService, private bookings: BookingsService, private payments: PaymentsService, private prisma: PrismaService, private settings: SettingsService) {}
 
   @Post('enquiries') create(@Auth() a: AuthCtx, @Body(Z(EnquirySchema)) b: any) { return this.enquiries.create(a, b); }
   @Get('enquiries') list(@Auth() a: AuthCtx, @Query() q: PageQuery) { return this.enquiries.listForCustomer(a.userId, q); }
@@ -38,6 +41,13 @@ export class CustomerController {
     return this.payments.start(a, id, b.milestoneId, `${env.WEB_URL}/account/bookings/${id}`);
   }
 
+  @HttpCode(200) @Post('bookings/:id/milestones/:mid/method') method(@Auth() a: AuthCtx, @Param('id') id: string, @Param('mid') mid: string, @Body(Z(PayMethodSchema)) b: any) { return this.payments.setMethod(a, id, mid, b.method); }
+  @HttpCode(200) @Post('bookings/:id/cash/:rid/confirm') confirmCash(@Auth() a: AuthCtx, @Param('rid') rid: string) { return this.payments.confirmCash(rid, { type: 'CUSTOMER', id: a.userId, customerId: a.userId }); }
+  @HttpCode(200) @Post('bookings/:id/cash/:rid/dispute') disputeCash(@Auth() a: AuthCtx, @Param('id') id: string, @Param('rid') rid: string, @Body(Z(ReasonSchema)) b: any) { return this.payments.disputeCash(a, id, rid, b.reason); }
+  @Get('payments-config') async payConfig() {
+    const s = await this.settings.all();
+    return { online: this.payments.provider.name !== 'none', allowCash: s.allowCash, requireOnlineDeposit: s.requireOnlineDeposit, cashAutoConfirmDays: s.cashAutoConfirmDays };
+  }
   @Get('payments') async myPayments(@Auth() a: AuthCtx, @Query() q: PageQuery) {
     const p = paging(q); const where = { booking: { customerId: a.userId }, status: { not: 'INITIATED' as const } };
     const [items, total] = await Promise.all([
@@ -81,7 +91,7 @@ export async function recomputeRatings(prisma: Pick<PrismaService, 'review' | 'v
 
 @Controller('vendor')
 export class VendorOpsController {
-  constructor(private enquiries: EnquiriesService, private bookings: BookingsService, private payments: PaymentsService, private prisma: PrismaService) {}
+  constructor(private enquiries: EnquiriesService, private bookings: BookingsService, private payments: PaymentsService, private prisma: PrismaService, private commission: CommissionService, private settings: SettingsService) {}
 
   @VendorOnly('enquiries') @Get('enquiries') list(@Auth() a: AuthCtx, @Query() q: any) { return this.enquiries.listForVendor(a, q); }
   @VendorOnly('enquiries') @Get('enquiries/:id') get(@Auth() a: AuthCtx, @Param('id') id: string) { return this.enquiries.getForVendor(a, id); }
@@ -101,6 +111,12 @@ export class VendorOpsController {
   @VendorOnly('bookings') @HttpCode(200) @Post('bookings/:id/cancel') cancel(@Auth() a: AuthCtx, @Param('id') id: string, @Body(Z(ReasonSchema)) b: any) { return this.bookings.vendorCancel(a, id, b.reason); }
   @VendorOnly('bookings') @HttpCode(200) @Post('bookings/:id/complete') complete(@Auth() a: AuthCtx, @Param('id') id: string) { return this.bookings.vendorComplete(a, id); }
 
+  @VendorOnly('bookings') @Post('bookings/:id/cash') recordCash(@Auth() a: AuthCtx, @Param('id') id: string, @Body(Z(CashRecordSchema)) b: any) { return this.payments.recordCash(a, id, b); }
+  @VendorOnly('finance') @Get('commission') async commissionStatement(@Auth() a: AuthCtx) {
+    const [statement, s] = await Promise.all([this.commission.statement(a.vendor!.id), this.settings.all()]);
+    return { ...statement, restricted: await this.commission.restricted(a.vendor!.id), payOnline: this.payments.provider.name !== 'none', instructions: s.commissionPaymentInstructions || null, dueDays: s.commissionDueDays };
+  }
+  @VendorOnly('finance') @HttpCode(200) @Post('commission/pay') payCommission(@Auth() a: AuthCtx, @Body(Z(CommissionPaySchema)) b: any) { return this.payments.startCommissionPayment(a, b.amount); }
   @VendorOnly('finance') @Get('earnings') earnings(@Auth() a: AuthCtx) { return this.payments.vendorEarnings(a.vendor!.id); }
   @VendorOnly('finance') @Get('transactions') tx(@Auth() a: AuthCtx, @Query() q: PageQuery) { return this.payments.vendorTransactions(a.vendor!.id, q); }
   @VendorOnly('finance') @Get('payouts') payouts(@Auth() a: AuthCtx, @Query() q: PageQuery) { return this.payments.vendorPayouts(a.vendor!.id, q); }
@@ -122,7 +138,8 @@ export class VendorOpsController {
       this.prisma.review.findMany({ where: { vendorId }, orderBy: { createdAt: 'desc' }, take: 3, include: { customer: { select: { name: true } } } }),
       this.prisma.listing.findMany({ where: { vendorId, status: { not: 'ARCHIVED' } }, orderBy: { viewCount: 'desc' }, take: 5, select: { id: true, title: true, status: true, viewCount: true, _count: { select: { enquiries: true, bookings: true } } } }),
     ]);
-    return { profileViews: views._sum.viewCount ?? 0, newEnquiries, pendingQuotes, upcomingBookings: upcoming, monthRevenue: month ? Number(month._sum.amount ?? 0) : null, pendingPayout: earnings ? earnings.pending + earnings.due : null, recentEnquiries, nextBookings, reviews, listings };
+    const owed = canFinance ? (await this.commission.statement(vendorId)).totals : null;
+    return { commissionOutstanding: owed?.outstanding ?? null, commissionOverdue: owed?.overdue ?? null, profileViews: views._sum.viewCount ?? 0, newEnquiries, pendingQuotes, upcomingBookings: upcoming, monthRevenue: month ? Number(month._sum.amount ?? 0) : null, pendingPayout: earnings ? earnings.pending + earnings.due : null, recentEnquiries, nextBookings, reviews, listings };
   }
 
   @VendorOnly() @Get('analytics') async analytics(@Auth() a: AuthCtx) {
@@ -211,12 +228,27 @@ export class MessagingController {
 
 @Controller()
 export class WebhooksController {
-  constructor(private payments: PaymentsService, private provider2: SandboxProvider) {}
+  constructor(private payments: PaymentsService, private provider2: SandboxProvider, private prisma: PrismaService) {}
 
   @Public() @SkipThrottle() @HttpCode(200) @Post('webhooks/payments/:provider')
   webhook(@Param('provider') provider: string, @Req() req: Request & { rawBody?: Buffer }) {
     if (!req.rawBody) throw new BadRequestException('Missing body');
     return this.payments.handleWebhook(provider, req.rawBody, req.headers);
+  }
+
+  /**
+   * Where Safepay sends the customer after checkout. The tracker in the link proves nothing by itself, so the
+   * result is checked with Safepay server to server before the customer is told anything.
+   */
+  @Public() @Get('payments/safepay/return')
+  async safepayReturn(@Query('tracker') tracker: string | undefined, @Query('to') to: string | undefined, @Res() res: Response) {
+    const back = to && to.startsWith(`${env.WEB_URL}/`) ? to : env.WEB_URL;
+    let result = 'pending';
+    if (env.PAYMENT_PROVIDER === 'safepay' && tracker && /^track_[a-zA-Z0-9-]{8,80}$/.test(tracker)) {
+      const known = (await this.prisma.payment.findUnique({ where: { providerRef: tracker } })) ?? (await this.prisma.commissionPayment.findUnique({ where: { providerRef: tracker } }));
+      if (known) result = (await this.payments.confirmWithGateway(tracker).catch(() => ({ status: 'pending' }))).status === 'success' ? 'success' : 'pending';
+    }
+    res.redirect(303, withQuery(back, { payment: result }));
   }
 
   private guard() { if (env.PAYMENT_PROVIDER !== 'sandbox') throw new NotFoundException(); }
@@ -225,7 +257,8 @@ export class WebhooksController {
   @Public() @Get('sandbox/pay/:ref') @Header('Content-Type', 'text/html; charset=utf-8') @Header('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'")
   async sandboxPage(@Param('ref') ref: string, @Query('returnUrl') returnUrl: string) {
     this.guard();
-    const p = await (this.payments as any).prisma.payment.findUnique({ where: { providerRef: ref } });
+    const prisma = (this.payments as any).prisma;
+    const p = (await prisma.payment.findUnique({ where: { providerRef: ref } })) ?? (await prisma.commissionPayment.findUnique({ where: { providerRef: ref } }));
     if (!p) throw new NotFoundException();
     const q = `returnUrl=${encodeURIComponent(returnUrl ?? '')}`;
     return `<!doctype html><meta name=viewport content="width=device-width,initial-scale=1"><title>Sandbox payment</title><body style="font-family:system-ui;background:#FFFDF9;color:#49343A;max-width:420px;margin:48px auto;padding:24px"><p style="background:#F8E9E9;padding:12px;border-radius:8px"><b>Test mode.</b> No real money moves.</p><h1>${formatPKR(Number(p.amount))}</h1><p>Payment ${p.code}</p><form method=post action="/v1/sandbox/pay/${ref}/success?${q}"><button style="width:100%;padding:14px;background:#8F3048;color:#fff;border:0;border-radius:10px;font-size:16px">Simulate success</button></form><form method=post action="/v1/sandbox/pay/${ref}/fail?${q}" style="margin-top:12px"><button style="width:100%;padding:14px;background:#fff;border:1px solid #F0E3E2;border-radius:10px;font-size:16px">Simulate failure</button></form>`;
@@ -235,20 +268,21 @@ export class WebhooksController {
   async sandboxComplete(@Param('ref') ref: string, @Param('result') result: string, @Query('returnUrl') returnUrl: string, @Res() res: Response) {
     this.guard();
     if (result !== 'success' && result !== 'fail') throw new NotFoundException();
-    const p = await (this.payments as any).prisma.payment.findUnique({ where: { providerRef: ref } });
+    const prisma = (this.payments as any).prisma;
+    const p = (await prisma.payment.findUnique({ where: { providerRef: ref } })) ?? (await prisma.commissionPayment.findUnique({ where: { providerRef: ref } }));
     if (!p) throw new NotFoundException();
     const body = JSON.stringify({ eventId: `evt_${ref}_${result}`, providerRef: ref, status: result === 'success' ? 'SUCCEEDED' : 'FAILED', amount: Number(p.amount) });
     await this.payments.handleWebhook('sandbox', Buffer.from(body), { 'x-sandbox-signature': this.provider2.sign(body) });
     const safe = (returnUrl ?? '').startsWith(env.WEB_URL) ? returnUrl : env.WEB_URL;
-    res.redirect(303, `${safe}?payment=${result}`);
+    res.redirect(303, withQuery(safe, { payment: result }));
   }
 }
 
 @Module({
   imports: [VendorsModule],
   controllers: [CustomerController, VendorOpsController, MessagingController, WebhooksController],
-  providers: [EnquiriesService, BookingsService, PaymentsService, SandboxProvider, NoProvider,
-    { provide: PAYMENT_PROVIDER, useFactory: (s: SandboxProvider, n: NoProvider) => (env.PAYMENT_PROVIDER === 'sandbox' ? s : n), inject: [SandboxProvider, NoProvider] }],
-  exports: [EnquiriesService, BookingsService, PaymentsService],
+  providers: [EnquiriesService, BookingsService, PaymentsService, CommissionService, SandboxProvider, SafepayProvider, NoProvider,
+    { provide: PAYMENT_PROVIDER, useFactory: (s: SandboxProvider, sp: SafepayProvider, n: NoProvider) => (env.PAYMENT_PROVIDER === 'sandbox' ? s : env.PAYMENT_PROVIDER === 'safepay' ? sp : n), inject: [SandboxProvider, SafepayProvider, NoProvider] }],
+  exports: [EnquiriesService, BookingsService, PaymentsService, CommissionService],
 })
 export class MarketplaceModule {}

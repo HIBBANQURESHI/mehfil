@@ -1,5 +1,5 @@
 import { brand } from '@mehfil/shared';
-import { BadgeCheck, CalendarCheck, FileText, Search, ShieldCheck, Wallet } from 'lucide-react';
+import { BadgeCheck, CalendarCheck, FileText, Search, ShieldCheck, Sparkles, Wallet } from 'lucide-react';
 import Link from 'next/link';
 import { GlowingLogo } from '@/components/brand';
 import { CategoryIcon } from '@/components/category-icon';
@@ -23,6 +23,7 @@ export default async function Home() {
             <p className="text-sm font-medium italic text-ruby">{brand.urduLine}</p>
             <h1 className="mt-3 text-4xl leading-[1.1] md:text-6xl">{brand.tagline}</h1>
             <p className="mt-5 max-w-lg text-lg text-muted">Find verified halls, caterers, decorators and photographers in Karachi. Compare real quotations and book with the date held in your name.</p>
+            <div className="mt-6 flex flex-wrap gap-3"><Link href="/plan" className="inline-flex items-center gap-2 rounded-lg bg-ruby px-5 py-3 text-sm font-semibold text-white hover:bg-ruby-hover"><Sparkles className="size-4" aria-hidden />Plan my wedding</Link><Link href="/how-it-works" className="inline-flex items-center rounded-lg border border-line bg-white px-5 py-3 text-sm font-semibold hover:border-rose">How it works</Link></div>
             <form action="/search" method="get" className="mt-8 grid gap-2 rounded-2xl border border-line bg-white p-3 shadow-[0_8px_30px_rgba(143,48,72,.08)] sm:grid-cols-2 lg:grid-cols-4">
               <select name="category" aria-label="Service" className={control}><option value="">All services</option>{cats?.map((c) => <option key={c.slug} value={c.slug}>{c.name}</option>)}</select>
               <select name="city" aria-label="City" className={control}>{cities?.map((c) => <option key={c.slug} value={c.slug}>{c.name}</option>)}</select>

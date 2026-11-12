@@ -11,7 +11,10 @@ export interface WebhookEventData { eventId: string; providerRef: string; status
 export interface PaymentProvider {
   readonly name: string;
   createCheckout(args: { paymentCode: string; amount: number; description: string; returnUrl: string }): Promise<{ providerRef: string; checkoutUrl: string }>;
-  parseWebhook(rawBody: Buffer, headers: Record<string, string | string[] | undefined>): WebhookEventData;
+  /** null means a genuine event that Mehfil doesn't act on (it is still acknowledged). */
+  parseWebhook(rawBody: Buffer, headers: Record<string, string | string[] | undefined>): WebhookEventData | null;
+  /** Optional: ask the gateway directly how a payment stands. null while it is still in progress. */
+  verify?(providerRef: string): Promise<WebhookEventData | null>;
   /** idempotencyKey is the same on a retry, and must be passed to the gateway so it can't pay out twice. */
   refund(args: { providerRef: string; amount: number; reason: string; idempotencyKey: string }): Promise<{ providerRef: string }>;
 }

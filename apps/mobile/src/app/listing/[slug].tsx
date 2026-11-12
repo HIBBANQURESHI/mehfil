@@ -3,8 +3,10 @@ import { Image } from 'expo-image';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { BadgeCheck, Check, Heart, MapPin, Star, Users } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
-import { Alert, Pressable, ScrollView, useWindowDimensions, View } from 'react-native';
+import { Pressable, ScrollView, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { AvailabilityCalendar } from '@/components/availability-calendar';
+import { showAlert } from '@/components/alert';
 import { Button, c, Card, ErrorView, Field, font, Loading, Row, Text } from '@/components/ui';
 import { api, toDevice, useApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
@@ -21,7 +23,7 @@ export default function Listing() {
   if (error) return <ErrorView error={error} retry={() => mutate()} />;
   if (isLoading || !l) return <Loading />;
   const save = async () => { if (requireAuth(`/listing/${slug}`)) setSaved((await api(`/saved/${l.id}/toggle`, { method: 'POST', body: {} })).saved); };
-  const send = async () => { try { const c2 = await api('/conversations', { body: { vendorId: l.vendor.id, body: message } }); setMessage(''); router.push(`/messages/${c2.id}`); } catch (e: any) { Alert.alert('Could not send', e.message); } };
+  const send = async () => { try { const c2 = await api('/conversations', { body: { vendorId: l.vendor.id, body: message } }); setMessage(''); router.push(`/messages/${c2.id}`); } catch (e: any) { showAlert('Could not send', e.message); } };
   return (
     <SafeAreaView edges={['bottom']} style={{ flex: 1, backgroundColor: c.warmWhite }}>
       <Stack.Screen options={{ title: '', headerRight: () => <Pressable accessibilityRole="button" accessibilityLabel={saved ? 'Remove from saved' : 'Save'} onPress={save}><Heart color={saved ? c.ruby : c.text} fill={saved ? c.ruby : 'transparent'} size={24} /></Pressable> }} />
@@ -37,6 +39,7 @@ export default function Listing() {
             {l.vendor.businessVerifiedAt && <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}><BadgeCheck size={16} color={c.success} /><Text style={{ color: c.success }}>Business verified</Text></View>}
           </View>
           <View style={{ gap: 6 }}><Text variant="h2">About</Text><Text>{l.description}</Text></View>
+          <View style={{ gap: 8 }}><Text variant="h2">Availability</Text><Text variant="muted">Dates already booked on Mehfil. Everything else is open to enquire.</Text><AvailabilityCalendar listingId={l.id} onPick={(date) => { if (requireAuth(`/listing/${slug}`)) router.push({ pathname: '/request', params: { ids: l.id, date, packages: JSON.stringify(l.packages.map((p: any) => ({ label: p.name, value: p.id }))) } }); }} /></View>
           {l.packages.length > 0 && <View style={{ gap: 10 }}><Text variant="h2">Packages</Text>{l.packages.map((p: any) => <Card key={p.id}><Text variant="h3">{p.name}</Text><Text style={{ color: c.ruby, fontFamily: font.bold }}>{formatPKR(p.price)}{p.priceUnit === 'PER_PERSON' ? ' /person' : ''}</Text>{p.description && <Text variant="muted">{p.description}</Text>}{p.inclusions.map((x: string) => <View key={x} style={{ flexDirection: 'row', gap: 6 }}><Check size={16} color={c.success} /><Text style={{ flex: 1 }}>{x}</Text></View>)}{p.exclusions.length > 0 && <Text variant="small">Not included: {p.exclusions.join(', ')}</Text>}</Card>)}</View>}
           {l.addOns.length > 0 && <Card title="Add-ons">{l.addOns.map((a: any) => <Row key={a.id} label={a.name} value={formatPKR(a.price)} />)}</Card>}
           {l.amenities.length > 0 && <View style={{ gap: 6 }}><Text variant="h2">Facilities</Text><View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>{l.amenities.map((a: string) => <View key={a} style={{ backgroundColor: c.blush, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 5 }}><Text style={{ fontSize: 13 }}>{a}</Text></View>)}</View></View>}

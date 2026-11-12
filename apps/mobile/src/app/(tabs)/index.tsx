@@ -1,9 +1,9 @@
 import { brand } from '@mehfil/shared';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Image } from 'expo-image';
-import { Redirect, router } from 'expo-router';
+import { Redirect, router, useFocusEffect } from 'expo-router';
 import { Bell, Search } from 'lucide-react-native';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { CategoryIcon } from '@/components/category-icon';
 import { ListingCard } from '@/components/listing-card';
@@ -18,7 +18,10 @@ export default function Home() {
   const cats = useApi<any[]>('/categories');
   const featured = useApi<any[]>('/featured');
   const top = useApi<any[]>('/top-rated');
-  const unread = useApi<any>(user ? '/notifications?pageSize=1' : null);
+  // Checked again whenever the home screen comes back into view, and every minute while it is open.
+  const unread = useApi<any>(user ? '/notifications?pageSize=1' : null, { refreshInterval: 60_000 });
+  const recheck = unread.mutate;
+  useFocusEffect(useCallback(() => { if (user) recheck(); }, [user, recheck]));
   if (seen === false && !user) return <Redirect href="/welcome" />;
   const featuredIds = new Set(featured.data?.map((l) => l.id));
   const popular = top.data?.filter((l) => !featuredIds.has(l.id)) ?? [];
@@ -37,7 +40,7 @@ export default function Home() {
           </Pressable>
         </View>
         <Pressable accessibilityRole="search" onPress={() => router.push('/explore')} style={{ marginHorizontal: 16, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#fff', borderWidth: 1, borderColor: c.border, borderRadius: 14, padding: 14 }}><Search color={c.muted} size={18} /><Text variant="muted">Find halls, caterers, decorators...</Text></Pressable>
-        <View style={{ marginHorizontal: 16 }}><Card style={{ backgroundColor: c.ruby, borderColor: c.ruby }}><Text variant="h2" style={{ color: '#fff' }}>{brand.tagline}</Text><Text style={{ color: '#F3DCE1' }}>{brand.urduLine}</Text><Button title="Plan my wedding" variant="secondary" style={{ alignSelf: 'flex-start', marginTop: 4 }} onPress={() => router.push(user ? '/wedding/new' : { pathname: '/login', params: { next: '/wedding/new' } })} /></Card></View>
+        <View style={{ marginHorizontal: 16 }}><Card style={{ backgroundColor: c.ruby, borderColor: c.ruby }}><Text variant="h2" style={{ color: '#fff' }}>{brand.tagline}</Text><Text style={{ color: '#F3DCE1' }}>{brand.urduLine}</Text><Button title="Plan my wedding" variant="secondary" style={{ alignSelf: 'flex-start', marginTop: 4 }} onPress={() => router.push(user ? '/plan' : { pathname: '/login', params: { next: '/plan' } })} /></Card></View>
         <View style={{ paddingHorizontal: 16, flexDirection: 'row', flexWrap: 'wrap', rowGap: 16 }}>
           {cats.data?.map((cat) => <Pressable key={cat.slug} accessibilityRole="button" accessibilityLabel={cat.name} onPress={() => router.push({ pathname: '/explore', params: { category: cat.slug } })} style={{ width: '25%', alignItems: 'center', gap: 6 }}><View style={{ width: 54, height: 54, borderRadius: 27, backgroundColor: c.blush, alignItems: 'center', justifyContent: 'center' }}><CategoryIcon name={cat.iconKey} color={c.ruby} /></View><Text style={{ fontSize: 12, lineHeight: 15, textAlign: 'center' }} numberOfLines={2}>{cat.name}</Text></Pressable>)}
         </View>
