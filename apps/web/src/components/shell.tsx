@@ -31,11 +31,11 @@ export function Shell({ sections, root, notificationsHref, userName, subtitle, c
   );
   return (
     <div className="min-h-screen lg:grid lg:grid-cols-[256px_1fr]">
-      <aside className="sticky top-0 hidden h-screen flex-col border-r border-line bg-white lg:flex"><div className="flex h-16 items-center px-5"><Logo href={root} /></div>{nav}</aside>
+      <aside className="sticky top-0 hidden h-screen flex-col border-r border-line bg-white lg:flex"><div className="flex h-16 items-center px-5"><Logo href={root} size="sm" /></div>{nav}</aside>
       {open && (
         <div className="fixed inset-0 z-40 lg:hidden">
           <div className="absolute inset-0 bg-ink/40" onClick={() => setOpen(false)} />
-          <aside className="absolute inset-y-0 left-0 flex w-72 flex-col bg-white"><div className="flex h-16 items-center justify-between px-5"><Logo href={root} /><button onClick={() => setOpen(false)} aria-label="Close menu"><X className="size-5" /></button></div>{nav}</aside>
+          <aside className="absolute inset-y-0 left-0 flex w-72 flex-col bg-white"><div className="flex h-16 items-center justify-between px-5"><Logo href={root} size="sm" /><button onClick={() => setOpen(false)} aria-label="Close menu"><X className="size-5" /></button></div>{nav}</aside>
         </div>
       )}
       <div className="min-w-0">

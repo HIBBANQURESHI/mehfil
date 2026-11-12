@@ -1,6 +1,7 @@
 import { brand } from '@mehfil/shared';
 import { BadgeCheck, CalendarCheck, FileText, Search, ShieldCheck, Wallet } from 'lucide-react';
 import Link from 'next/link';
+import { GlowingLogo } from '@/components/brand';
 import { CategoryIcon } from '@/components/category-icon';
 import { ListingCard, ListingCardData } from '@/components/listing-card';
 import { LinkButton } from '@/components/ui';
@@ -8,23 +9,6 @@ import { publicGet } from '@/lib/server';
 
 interface Cat { id: string; name: string; slug: string; iconKey: string | null; imageUrl: string | null; listingCount: number }
 interface City { id: string; name: string; slug: string }
-
-function Arches() {
-  // Three nested Mughal arches: the brand's main visual motif.
-  const arch = (w: number, h: number) => { const x = (300 - w) / 2, top = 340 - h; return `M${x} 340V${top + w * 0.52}C${x} ${top + w * 0.2} ${150 - w * 0.2} ${top + w * 0.14} 150 ${top}C${150 + w * 0.2} ${top + w * 0.14} ${x + w} ${top + w * 0.2} ${x + w} ${top + w * 0.52}V340Z`; };
-  return (
-    <svg viewBox="0 0 300 340" className="h-full w-full" aria-hidden>
-      <path d={arch(290, 330)} fill="#8F3048" />
-      <path d={arch(250, 286)} fill="none" stroke="#D4AD63" strokeWidth="1.5" />
-      <path d={arch(214, 250)} fill="#D98C9D" />
-      <path d={arch(160, 196)} fill="#F8E9E9" />
-      <path d={arch(110, 140)} fill="#FFFDF9" stroke="#D4AD63" strokeWidth="1.5" />
-      {[0, 1, 2, 3, 4].map((i) => <circle key={i} cx={106 + i * 22} cy={324} r={3.5} fill="#D4AD63" />)}
-      <path d="M150 232c10 12 22 18 22 34a22 22 0 0 1-44 0c0-16 12-22 22-34z" fill="#8F3048" />
-      <circle cx="150" cy="268" r="6" fill="#D4AD63" />
-    </svg>
-  );
-}
 
 export default async function Home() {
   const [cats, cities, top, featured] = await Promise.all([publicGet<Cat[]>('/categories', 300), publicGet<City[]>('/cities', 300), publicGet<ListingCardData[]>('/top-rated'), publicGet<ListingCardData[]>('/featured')]);
@@ -46,7 +30,7 @@ export default async function Home() {
               <button className="flex items-center justify-center gap-2 rounded-lg bg-ruby py-3 text-sm font-semibold text-white hover:bg-ruby-hover"><Search className="size-4" aria-hidden />Search</button>
             </form>
           </div>
-          <div className="mx-auto hidden h-[400px] md:block"><Arches /></div>
+          <GlowingLogo className="mx-auto w-full max-w-md" />
         </div>
       </section>
 

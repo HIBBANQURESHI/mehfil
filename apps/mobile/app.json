@@ -16,7 +16,7 @@
       "package": "com.mehfil.app",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#8F3048"
+        "backgroundColor": "#3E1220"
       }
     },
     "web": {
@@ -32,8 +32,8 @@
         "expo-splash-screen",
         {
           "image": "./assets/splash.png",
-          "imageWidth": 200,
-          "backgroundColor": "#FFFDF9"
+          "imageWidth": 160,
+          "backgroundColor": "#3E1220"
         }
       ],
       [

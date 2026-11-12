@@ -23,6 +23,8 @@ body { background: var(--color-warm); color: var(--color-ink); font-family: var(
 h1, h2, h3, .display { font-family: var(--font-display); font-weight: 600; letter-spacing: -0.01em; }
 :focus-visible { outline: 2px solid var(--color-ruby); outline-offset: 2px; border-radius: 4px; }
 .tnum { font-variant-numeric: tabular-nums; }
+@keyframes mehfil-breathe { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+@keyframes mehfil-twinkle { 0%, 100% { opacity: 0; transform: scale(.5); } 50% { opacity: 1; transform: scale(1.2); } }
 .prose-legal h2 { font-size: 1.25rem; margin: 1.75rem 0 .5rem; }
 .prose-legal p, .prose-legal li { line-height: 1.7; margin-bottom: .6rem; }
 .prose-legal ul { list-style: disc; padding-left: 1.25rem; }

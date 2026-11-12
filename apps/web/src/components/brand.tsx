@@ -1,16 +1,26 @@
 import { brand } from '@mehfil/shared';
 import Link from 'next/link';
 
-export function Mark({ className = 'size-8' }: { className?: string }) {
+const SIZES = { sm: 'h-10', md: 'h-12', lg: 'h-20' } as const;
+
+/** The Mehfil logo. The file is a transparent cut-out, so it sits cleanly on the light backgrounds used across the site. */
+export function Logo({ href = '/', size = 'md' }: { href?: string; size?: keyof typeof SIZES }) {
   return (
-    <svg viewBox="0 0 40 40" className={className} aria-hidden>
-      <path d="M20 3c5 6 14 9 14 18v16H6V21C6 12 15 9 20 3z" fill="#8F3048" />
-      <path d="M20 12c3 4 8 6 8 12v13H12V24c0-6 5-8 8-12z" fill="#FFFDF9" />
-      <circle cx="20" cy="27" r="3" fill="#D4AD63" />
-    </svg>
+    <Link href={href} className="inline-flex shrink-0 items-center" aria-label={`${brand.name} home`}>
+      <img src="/brand/logo.webp" alt={brand.name} width={1100} height={691} className={`${SIZES[size]} w-auto`} />
+    </Link>
   );
 }
 
-export function Logo({ href = '/' }: { href?: string }) {
-  return <Link href={href} className="flex items-center gap-2" aria-label={`${brand.name} home`}><Mark /><span className="display text-2xl text-ruby">{brand.name}</span></Link>;
+/** The logo with its golden glow, for dark panels. The glow is only visible against dark colours. */
+export function GlowingLogo({ className = '' }: { className?: string }) {
+  return (
+    <div className={`relative overflow-hidden rounded-[2rem] bg-[radial-gradient(ellipse_at_50%_45%,#8F3048_0%,#5E1F31_38%,#2A0B14_72%,#14050A_100%)] shadow-[0_24px_80px_rgba(94,31,49,.35)] ${className}`}>
+      <div aria-hidden className="absolute inset-0 bg-[radial-gradient(circle_at_50%_42%,rgba(212,173,99,.35),transparent_55%)] motion-safe:animate-[mehfil-breathe_4.5s_ease-in-out_infinite]" />
+      <img src="/brand/logo-glow.webp" alt={`${brand.name}: ${brand.tagline}`} width={900} height={617} className="relative w-full" />
+      {[['72%', '40%', '0s'], ['78%', '46%', '1.1s'], ['56%', '80%', '2.2s'], ['16%', '22%', '0.6s'], ['88%', '18%', '1.7s']].map(([left, top, delay]) => (
+        <span key={left + top} aria-hidden className="absolute size-1.5 rounded-full bg-[#F3DFB4] shadow-[0_0_10px_3px_rgba(243,223,180,.7)] motion-safe:animate-[mehfil-twinkle_3s_ease-in-out_infinite]" style={{ left, top, animationDelay: delay }} />
+      ))}
+    </div>
+  );
 }

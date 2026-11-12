@@ -1,5 +1,6 @@
 import { brand } from '@mehfil/shared';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Image } from 'expo-image';
 import { Redirect, router } from 'expo-router';
 import { Bell, Search } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
@@ -26,7 +27,10 @@ export default function Home() {
     <Screen padded={false} edges={['top']} onRefresh={() => Promise.all([cats.mutate(), featured.mutate(), top.mutate()])}>
       <View style={{ gap: 20, paddingTop: 8 }}>
         <View style={{ paddingHorizontal: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-          <View><Text variant="h2" style={{ color: c.ruby }}>{brand.name}</Text><Text variant="small">Karachi</Text></View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <Image source={require('../../../assets/logo.webp')} style={{ width: 86, height: 54 }} contentFit="contain" accessibilityLabel={brand.name} />
+            <Text variant="small">Karachi</Text>
+          </View>
           <Pressable accessibilityRole="button" accessibilityLabel="Notifications" onPress={() => router.push(user ? '/notifications' : { pathname: '/login', params: { next: '/notifications' } })} style={{ padding: 8 }}>
             <Bell color={c.text} size={24} />
             {!!unread.data?.unread && <View style={{ position: 'absolute', right: 2, top: 2, minWidth: 18, height: 18, borderRadius: 9, backgroundColor: c.ruby, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#fff', fontSize: 10, lineHeight: 13 }}>{unread.data.unread > 99 ? '99+' : unread.data.unread}</Text></View>}

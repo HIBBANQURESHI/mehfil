@@ -10,7 +10,7 @@ export async function SiteHeader() {
   return (
     <header className="sticky top-0 z-30 border-b border-line bg-warm/95 backdrop-blur">
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-4 px-4">
-        <Logo />
+        <Logo size="md" />
         <nav className="hidden items-center gap-6 text-sm md:flex">
           <Link href="/c/banquet-halls" className="hover:text-ruby">Venues</Link>
           <Link href="/c/catering" className="hover:text-ruby">Catering</Link>
@@ -36,7 +36,7 @@ export function SiteFooter() {
   return (
     <footer className="mt-20 border-t border-line bg-blush/50">
       <div className="mx-auto grid max-w-6xl gap-8 px-4 py-12 md:grid-cols-4">
-        <div><Logo /><p className="mt-3 text-sm text-muted">{brand.tagline}</p><p className="mt-1 text-sm italic text-muted">{brand.urduLine}</p></div>
+        <div><Logo size="lg" /><p className="mt-3 text-sm text-muted">{brand.tagline}</p><p className="mt-1 text-sm italic text-muted">{brand.urduLine}</p></div>
         {columns.map((c) => <div key={c.h}><p className="mb-3 text-sm font-semibold">{c.h}</p><ul className="space-y-2 text-sm text-muted">{c.links.map(([l, h]) => <li key={h}><Link href={h} className="hover:text-ruby">{l}</Link></li>)}</ul></div>)}
       </div>
       <p className="border-t border-line py-4 text-center text-xs text-muted">© {new Date().getFullYear()} {process.env.NEXT_PUBLIC_LEGAL_NAME ?? brand.name}</p>

@@ -5,9 +5,10 @@ import * as Notifications from 'expo-notifications';
 import { router, Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Platform } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { AnimatedSplash } from '@/components/animated-splash';
 import { c, font } from '@/components/ui';
 import { linkToRoute } from '@/lib/api';
 import { AuthProvider, useAuth } from '@/lib/auth';
@@ -18,18 +19,21 @@ if (Platform.OS !== 'web') Notifications.setNotificationHandler({ handleNotifica
 function Nav() {
   const { ready } = useAuth();
   const [fonts] = useFonts({ DMSans_400Regular, DMSans_500Medium, DMSans_600SemiBold, PlayfairDisplay_600SemiBold });
-  useEffect(() => { if (ready && fonts) SplashScreen.hideAsync().catch(() => undefined); }, [ready, fonts]);
+  const [splash, setSplash] = useState(true);
+  const endSplash = useCallback(() => setSplash(false), []);
   useEffect(() => {
     if (Platform.OS === 'web') return;
     const sub = Notifications.addNotificationResponseReceivedListener((r) => { const to = linkToRoute(r.notification.request.content.data?.link as string); if (to) router.push(to as never); });
     return () => sub.remove();
   }, []);
-  if (!ready || !fonts) return null;
+  // The native splash stays up until fonts load; the animated one then takes over and waits for the session check.
+  if (!fonts) return null;
   const title = (t: string) => ({ title: t });
+  // One splash instance across loading and the app appearing underneath, so the animation never restarts.
   return (
     <>
-      <StatusBar style="dark" />
-      <Stack screenOptions={{ headerStyle: { backgroundColor: c.warmWhite }, headerTintColor: c.ruby, headerTitleStyle: { fontFamily: font.display, color: c.text }, headerShadowVisible: false, contentStyle: { backgroundColor: c.warmWhite }, headerBackButtonDisplayMode: 'minimal' }}>
+      {!splash && <StatusBar style="dark" />}
+      {ready && <Stack screenOptions={{ headerStyle: { backgroundColor: c.warmWhite }, headerTintColor: c.ruby, headerTitleStyle: { fontFamily: font.display, color: c.text }, headerShadowVisible: false, contentStyle: { backgroundColor: c.warmWhite }, headerBackButtonDisplayMode: 'minimal' }}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="welcome" options={{ headerShown: false }} />
         <Stack.Screen name="login" options={title('Sign in')} />
@@ -53,7 +57,9 @@ function Nav() {
         <Stack.Screen name="wedding/new" options={{ ...title('Create wedding'), presentation: 'modal' }} />
         <Stack.Screen name="wedding/[id]" options={title('My wedding')} />
         <Stack.Screen name="settings" options={title('Account settings')} />
-      </Stack>
+      </Stack>}
+      {/* Last, so it draws above the native navigation views. */}
+      {splash && <AnimatedSplash ready={ready} onDone={endSplash} />}
     </>
   );
 }
